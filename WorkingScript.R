@@ -4,6 +4,7 @@
 library(tidyverse)
 library(GGally)
 library(DataExplorer)
+library(gt)
 library(tidymodels)
 library(embed)
 library(mlr3verse)
@@ -753,14 +754,56 @@ tuneres_xgb2<- as.data.table(tune_xgb2$archive)
 
 
 
+
+#tuning instance 2.1: max depth >12, min_child_weight >10
+k_fourfold <- function(k) {
+  k <- k*4
+  k
+}
+
+k_fivefold <- function(k) {
+  k <- k*5
+  k
+}
+
+
+learner_xgb2.1 <- learner_xgb2
+learner_xgb2.1$param_set$values$max_depth <- to_tune(p_int(3, 5, 
+                                                         trafo=k_fourfold))
+learner_xgb2.1$param_set$values$min_child_weight <- to_tune(p_int(2, 4,
+                                                                trafo=k_fivefold))
+
+
+
+tune_xgb2.1 = TuningInstanceSingleCrit$new(task_train, learner_xgb2.1, resample_cv, 
+                                         measure_log, term_none,
+                                         store_benchmark_result = TRUE)
+
+#tune xgboost2.1
+tune_grid$initialize()
+set.seed(1923)
+with_progress(tune_grid$optimize(tune_xgb2.1))
+
+#results
+tuneres_xgb2.1<- as.data.table(tune_xgb2.1$archive)
+#best performing least complex tune:
+  #max_depth=12, min_child_weight 20, logloss 0.5400153
+
+
+
+
+
+
+
+
 ####tune regularization ####
 
 
 #tuning space
 learner_xgb3 <- learner_xgb2
-learner_xgb3$param_set$values$max_depth <- #???
-learner_xgb3$param_set$values$min_child_weight <- #???
-learner_xgb3$param_set$values$gamma <- to_tune(p_int(0, 1))
+learner_xgb3$param_set$values$max_depth <- 12
+learner_xgb3$param_set$values$min_child_weight <- 20
+learner_xgb3$param_set$values$gamma <- to_tune(p_dbl(0, 1))
 learner_xgb3$param_set$values$lambda <- to_tune(p_dbl(0, 2))
 learner_xgb3$param_set$values$alpha <- to_tune(p_dbl(0, 1))
 
@@ -768,7 +811,7 @@ learner_xgb3$param_set$values$alpha <- to_tune(p_dbl(0, 1))
 
 #tuning instance
 tune_xgb3 = TuningInstanceSingleCrit$new(task_train, learner_xgb3, resample_cv, 
-                                         measure_log, term100,
+                                         measure_log, term50,
                                          store_benchmark_result = TRUE)
 
 #tune xgboost3
@@ -778,6 +821,7 @@ with_progress(tune_anneal$optimize(tune_xgb3))
 
 #results
 tuneres_xgb3 <- as.data.table(tune_xgb3$archive)
+#gamma 0.97364277 lambda 0.86335184 alpha 0.4540298 logloss 0.4312961
 
 
 
@@ -788,9 +832,9 @@ tuneres_xgb3 <- as.data.table(tune_xgb3$archive)
 
 #tuning space
 learner_xgb4 <- learner_xgb3
-learner_xgb4$param_set$values$gamma <- #???
-learner_xgb4$param_set$values$lambda <- #???
-learner_xgb4$param_set$values$alpha <- #???
+learner_xgb4$param_set$values$gamma <- 0.97364277
+learner_xgb4$param_set$values$lambda <- 0.86335184
+learner_xgb4$param_set$values$alpha <- 0.4540298
 learner_xgb4$param_set$values$subsample <- to_tune(p_dbl(0.5, 1))
 learner_xgb4$param_set$values$colsample_bytree <- to_tune(p_dbl(0.5, 1))
 
@@ -798,7 +842,7 @@ learner_xgb4$param_set$values$colsample_bytree <- to_tune(p_dbl(0.5, 1))
 
 #tuning instance
 tune_xgb4 = TuningInstanceSingleCrit$new(task_train, learner_xgb4, resample_cv, 
-                                         measure_log, term100,
+                                         measure_log, term50,
                                          store_benchmark_result = TRUE)
 
 #tune xgboost4
@@ -808,13 +852,33 @@ with_progress(tune_anneal$optimize(tune_xgb4))
 
 #results
 tuneres_xgb4 <- as.data.table(tune_xgb4$archive)
-
+#interrupted: makes it worse
 
 
 
 #### retune eta ####
 
-#if necessary
+#tuning space
+learner_xgb5 <- learner_xgb4
+learner_xgb5$param_set$values$subsample <- 1
+learner_xgb5$param_set$values$colsample_bytree <- 1
+learner_xgb5$param_set$values$eta <- to_tune(p_dbl(0.01, 0.3))
+
+
+
+#tuning instance
+tune_xgb5 = TuningInstanceSingleCrit$new(task_train, learner_xgb5, resample_cv, 
+                                         measure_log, term50,
+                                         store_benchmark_result = TRUE)
+
+#tune xgboost5
+tune_anneal$initialize()
+set.seed(1923)
+with_progress(tune_anneal$optimize(tune_xgb5))
+
+#results
+tuneres_xgb5 <- as.data.table(tune_xgb5$archive)
+#eta 0.09353067, logloss 0.4303643
 
 
 
@@ -823,21 +887,9 @@ tuneres_xgb4 <- as.data.table(tune_xgb4$archive)
 #### tune nrounds ####
 
 
-#create weights vector
-xgb_weights <- c()
-
-for (i in 1:nrow(df_train)) {
-  if (df_train[i,1] == "Yes") {
-    xgb_weights <- append(xgb_weights, minority_weight)
-  } else {
-    xgb_weights <- append(xgb_weights, 1)
-  }
-}
-
-
 #create XGB data matrix
 xgb_train <- xgb.DMatrix(data=as.matrix(train_x), label=train_y,
-                         weight=xgb_weights)
+                         weight=task_train$weights$weight)
 
 
 #create xgb params list
@@ -845,31 +897,33 @@ xgb_params <- list (
   booster="gbtree",
   objective="binary:logistic",
   nthread=3,
-  max_delta_step=,
-  eta=,
-  max_depth=,
-  min_child_weight=,
-  subsample=,
-  colsample_bytree=,
-  gamma=,
-  lambda=,
-  alpha=,
+  max_delta_step=0,
+  eta=0.09353067,
+  max_depth=12,
+  min_child_weight=20,
+  subsample=1,
+  colsample_bytree=1,
+  gamma=0.9736428,
+  lambda=0.8633518,
+  alpha=0.4540298
 )
 
 
 #run xgb.cv
 set.seed(1923)
-xgb_cv <- xgb.cv(xgb_params, xgb_data, nfold=5, verbose=TRUE, nrounds=?###,
+xgb_cv <- xgb.cv(xgb_params, xgb_train, nfold=5, verbose=TRUE, nrounds=5000,
                    early_stopping_rounds = 50)
-
+#16 rounds
+#train-logloss:0.464007+0.009111
+#test-logloss:0.612952+0.039875
+#U-shaped crossvalidation
 
 
 
 #final learner with best tune
-learner_xgb <- learner_xgb4
-learner_xgb$param_set$values$subsample <- #???
-learner_xgb$param_set$values$colsample_bytree <- #???
-learner_xgb$param_set$values$nrounds <- #???
+learner_xgb <- learner_xgb5
+learner_xgb$param_set$values$eta <- 0.09353067
+learner_xgb$param_set$values$nrounds <- 16
 
 
   
@@ -893,7 +947,7 @@ benchmark_test = benchmark_grid(tasks=task_test,
                                               learner_glmnet,
                                               learner_knn, learner_svm,
                                               learner_xgb),
-                                   resamplings=resample_cv)
+                                   resamplings=resample_test)
 
 
 
@@ -917,12 +971,12 @@ prc_plot <- prc_plot +
   geom_ribbon(aes(x=x, y=y, ymin=0, ymax=y, fill=modname), alpha=0.075) +
   labs(x="Recall", y="Precision",
        title="Precision-recall curves of loan client classifiers",
-       subtitle="Featureless classifier predicts the class proportions as the probability of each class",
+       subtitle="Baseline classifier predicts the class proportions as the probability of each class",
        color="Classifiers",
        fill="Classifiers") + 
   theme(legend.position = "right") + 
-  scale_color_brewer(palette="Dark2", labels=c("Featureless", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")) + 
-  scale_fill_brewer(palette="Dark2", labels=c("Featureless", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")) +
+  scale_color_brewer(palette="Dark2", labels=c("Baseline", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")) + 
+  scale_fill_brewer(palette="Dark2", labels=c("Baseline", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")) +
   theme_bw()
 
 
@@ -938,7 +992,7 @@ prc_plot
 df_metrics <- benchmarkres_table[,c(4, 7:12)]
 colnames(df_metrics) <- c("Classifier", "Recall", "PRAUC",
                               "Brier score", "Cohen's kappa", "Accuracy", "Time")
-df_metrics[1:6, 1] <- c("Featureless", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")
+df_metrics[1:6, 1] <- c("Baseline", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")
 df_metrics[,2:6] <- round(df_metrics[,2:6], 4)
 
 
@@ -953,7 +1007,7 @@ tb_perf <- gt(data=df_metrics, rowname_col = 1) %>%
               cell_text(weight="bold"))) %>% 
   data_color(columns=c(2,3,5,6), colors=scales::col_numeric(
     palette=c("red", "green"),
-    domain=c(0,1)
+    domain=c(-0.006,1)
   )) %>%
   data_color(columns=c(4), colors=scales::col_numeric(
     palette=c("green", "red"),
