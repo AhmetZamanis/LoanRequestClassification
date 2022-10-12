@@ -1,0 +1,379 @@
+---
+title: "Imbalanced Classification - Loan request dataset"
+author: "Ahmet Zamanis"
+date: "2022-10-12"
+output: 
+  github_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+options(scipen=999)
+
+```
+
+## Introduction
+
+## Data preparation
+
+```{r Packages}
+
+library(tidyverse) #data handling & ggplot2
+library(GGally) #exploratory analysis
+library(DataExplorer) #exploratory analysis
+library(patchwork) #combining ggplot2 objects
+library(gt) #data tables
+library(tidymodels) #preprocessing
+library(embed) #encoding
+library(mlr3verse) #loads various mlr3 machine learning packages
+library(mlr3hyperband) #hyperband tuning algorithm
+library(xgboost) #regularized gradient boosting
+
+```
+
+
+```{r LoadData}
+
+#load and summarize original data
+df <- read.csv("./OriginalData/clients.csv", header=TRUE)
+summary(data.frame(unclass(df), stringsAsFactors = TRUE))
+
+```
+
+
+```{r RenameColumns}
+
+#rename columns
+names(df)[8] <- "have_children"
+names(df)[13] <- "prev_client"
+names(df)[14] <- "bad_client"
+
+```
+
+
+```{r RecodeEducation}
+
+#recode levels of education column
+df$education <- recode(df$education, "Higher education"="Higher",
+                       "Incomplete higher education"="HigherDropout",
+                       "Incomplete secondary education"="Secondary",
+                       "PhD degree"="Higher",
+                       "Secondary education"="Secondary",
+                       "Secondary special education"="SecondarySpec")
+
+```
+
+
+```{r RecodeProductType}
+
+#recode levels of product_type column, combining unfrequent levels together
+#new levels: Beauty, Vehicles, Necessities
+df$product_type <- recode(df$product_type, 
+                          "Cosmetics and beauty services" = "Beauty",
+                          "Jewelry" = "Beauty",
+                          "Auto" = "Vehicles",
+                          "Boats" = "Vehicles",
+                          "Medical services" = "Necessities",
+                          "Training" = "Necessities",
+                          "Childen's goods" = "Necessities"
+                          )
+
+
+#new level: Recreational
+lookup_recreational <- tibble(old=c("Tourism", "Music", "Fishing and hunting supplies",
+                                    "Sporting goods", "Audio & Video", "Fitness"),
+                              new=c(rep("Recreational", 6)))
+df$product_type <- recode(df$product_type, !!!deframe(lookup_recreational))
+
+
+#new level: Hardware
+lookup_hardware <- tibble(old=c("Windows & Doors", "Construction Materials", "Repair Services",
+                                "Garden equipment"),
+                              new=c(rep("Hardware", 4)))
+df$product_type <- recode(df$product_type, !!!deframe(lookup_hardware))
+
+
+#shorten the level Household appliances
+df$product_type <- recode(df$product_type, "Household appliances"="Appliances")
+
+#remove intermediary objects
+rm(prod_types, prod_types_rare, lookup_hardware, lookup_recreational)
+
+```
+
+
+```{r FactorConversions}
+
+#factor convert categorical columns
+#month, sex, product_type, family status, region, phone operator: 
+  #factorize, don't change levels
+for (i in c(1, 5, 7, 9, 11, 12)){
+  df[,i] <- as.factor(df[,i])
+}
+rm(i)
+
+
+#have children, region, phone_operator, prev_client, bad_client
+  #factorize, recode levels
+for (i in c(8, 13, 14)) {
+  df[,i] <- recode(as.character(df[,i]),
+                   "0" = "No",
+                   "1" = "Yes")
+  df[,i] <- as.factor(df[,i])
+}
+rm(i)
+
+
+#education: factorize and order levels
+df$education <- factor(df$education, levels=c("SecondarySpec", "Secondary",
+                                              "HigherDropout", "Higher"),
+                       ordered=TRUE)
+
+```
+
+
+```{r SummaryDataPrep}
+
+summary(df)
+
+```
+
+
+## Exploratory analysis
+
+### Numeric features
+
+```{r EDANumerics, echo=FALSE}
+
+ggpairs(df,
+        columns=c("credit_amount", "credit_term", "age", "income", "bad_client"),
+        mapping=(aes(color=bad_client, fill=bad_client,  alpha=0.2)),
+        title="Numeric features and outcome") +
+  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
+  scale_fill_manual(values=c("#00BFC4", "#F8766D"))
+
+```
+
+
+### Categorical features
+
+```{r EDACatLoop, echo=FALSE}
+
+plotno <- 1
+for (i in c(1, 5, 6:9, 11:13)){
+  y_val <- df[,i]
+  p <- ggplot(df, aes(y=!!y_val, color=bad_client, fill=bad_client)) +
+    geom_bar(position="stack", alpha=0.5) +
+    scale_color_manual(values=c("#00BFC4", "#F8766D")) +
+    scale_fill_manual(values=c("#00BFC4", "#F8766D"))
+  
+  assign(paste0("bar", plotno), p)
+  plotno <- plotno + 1
+}
+rm(p, plotno, i, y_val)
+
+bar1 <- bar1 + labs(y="month", x="")
+bar2 <- bar2 + labs(y="sex", x="")
+bar3 <- bar3 + labs(y="education", x="Count")
+bar4 <- bar4 + labs(y="product_type", x="Count")
+bar5 <- bar5 + labs(y="have_children", x="")
+bar6 <- bar6 + labs(y="region", x="")
+bar9 <- bar9 + labs(y="prev_client", x="")
+bar8 <- bar8 + labs(y="family_status", x="Count")
+bar9 <- bar9 + labs(y="phone_operator", x="Count")
+
+```
+
+```{r EDACat1, echo=FALSE}
+
+(bar1 | bar2) / (bar3 | bar4) +
+  plot_layout(guides="collect") +
+  plot_annotation(title="Categorical features, colored by outcome")
+
+```
+
+
+```{r EDACat2, echo=FALSE}
+
+(bar5 | bar6 | bar9) / (bar7 | bar8) +
+  plot_layout(guides="collect") +
+  plot_annotation(title="Categorical features, colored by outcome")
+
+```
+
+
+### Interaction terms
+
+```{r AgeXIncome, echo=FALSE}
+
+ggplot(df, aes(age, income, color=bad_client)) + geom_point() +
+  geom_smooth() + 
+  labs(title="Interaction of age and income for loan request classification") + 
+  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
+  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
+  theme_bw()
+
+```
+
+
+```{r AgeXFamilyStatus, echo=FALSE}
+
+ggplot(df, aes(family_status, age, fill=bad_client)) + 
+  geom_boxplot(width=0.5, lwd=0.5) + stat_boxplot(geom="errorbar", width=0.5, lwd=0.5) +
+  labs(title="Interaction of age and family status for loan request classification") + 
+  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
+  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
+  theme_bw()
+
+```
+
+
+```{r AgeXHaveChildren, echo=FALSE}
+
+ggplot(df, aes(have_children, age, fill=bad_client)) + 
+  geom_boxplot(width=0.5, lwd=0.5) + stat_boxplot(geom="errorbar", width=0.5, lwd=0.5) +
+  labs(title="Interaction of age and having children for loan request classification") + 
+  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
+  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
+  theme_bw()
+
+```
+
+
+```{r CreditAmountXProductType, echo=FALSE}
+
+ggplot(df, aes(product_type, credit_amount, fill=bad_client)) + 
+  geom_boxplot(width=0.5, lwd=0.5) + stat_boxplot(geom="errorbar", width=0.5, lwd=0.5) +
+  labs(title="Interaction of credit amount and product type for loan request classification") + 
+  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
+  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
+  theme_bw()
+
+```
+
+
+## Feature engineering
+
+### Creating new features
+
+
+```{r FeatEng}
+
+#payment: amount to be paid in 1 payment period
+df <- df %>% mutate(payment = round(credit_amount / credit_term, 0), .after=credit_term)
+
+#ratio_amount: total amount to be paid / income
+df <- df %>% mutate(ratio_amount = round(credit_amount / income, 2), .after=credit_amount)
+
+#ratio_payment: one payment / income
+df <- df %>% mutate(ratio_payment = round(payment / income, 2), .after=payment)
+
+```
+
+
+### Evaluating new features
+
+```{r FeatEngEval, echo=FALSE}
+
+ggpairs(df,
+        columns=c("payment", "ratio_amount", "ratio_payment", "bad_client"),
+        mapping=(aes(color=bad_client, fill=bad_client, alpha=0.5)),
+        title="New features and outcome") +
+        scale_color_manual(values=c("#00BFC4", "#F8766D")) +
+        scale_fill_manual(values=c("#00BFC4", "#F8766D"))
+
+```
+
+
+## Modeling
+
+### Preprocessing
+
+```{r SplitData}
+
+#split train-test data
+set.seed(1923)
+data_split <- initial_split(df, prop=4/5, strata=bad_client)
+df_train <- training(data_split)
+df_test <- testing(data_split)
+rm(data_split)
+
+```
+
+
+```{r Recipe}
+
+#create preprocessing recipe
+recipe0 <- recipe(bad_client ~ ., data=df_train) %>%
+  step_log(all_numeric_predictors(), signed=TRUE) %>% #log transform numeric features
+  step_ordinalscore(education) %>% #ordinal encode education
+  step_woe(all_nominal_predictors(), outcome="bad_client") %>% #target encode nominal features with WOE
+  step_center(all_predictors()) %>%  #center and scale numeric features
+  step_scale(all_predictors()) %>%
+  step_pca(ratio_amount, ratio_payment, num_comp=2) %>% #PCA ratio_amount and ratio_payment
+  step_interact(terms = ~ credit_amount:woe_product_type + age:income + 
+age:woe_family_status + age:woe_have_children) #add interactions
+
+
+#prep recipe on training data
+recipe0_prep <- prep(recipe0, training=df_train)
+
+
+#bake recipe on training and testing data
+df_train <- bake(recipe0_prep, new_data=df_train)
+df_test <- bake(recipe0_prep, new_data=df_test)
+
+
+#move outcome columns to start
+df_train <- df_train %>% relocate(bad_client, .before=credit_amount)
+df_test <- df_test %>% relocate(bad_client, .before=credit_amount)
+
+
+#create dataframes with only features
+train_x <- df_train[,-c(1)]
+test_x <- df_test[,-c(1)]
+
+
+#create numeric outcome vector
+train_y <- as.numeric(df_train$bad_client) - 1 
+
+
+#bind back training and testing data for mlr3 custom resampling
+df1 <- rbind(df_train, df_test)
+rm(recipe0, recipe0_prep)
+
+```
+
+
+```{r DistEval, echo=FALSE}
+
+plot_histogram(df_train, binary_as_factor = FALSE, nrow=4L, ncol=5L)
+
+```
+
+
+
+### Creating mlr3 objects
+
+### Approach to hyperparameter tuning
+
+### Classifiers and best tunes found
+
+#### Naive Bayes
+
+#### glmnet
+
+#### kNN
+
+#### SVM
+
+#### XGBoost
+
+### Benchmarking
+
+## Conclusions
