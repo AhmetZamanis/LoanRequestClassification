@@ -294,83 +294,249 @@ ggpairs(df,
 
 ### Preprocessing
 
-```{r SplitData}
+```{r OrdinalEncode}
 
-#split train-test data
-set.seed(1923)
-data_split <- initial_split(df, prop=4/5, strata=bad_client)
-df_train <- training(data_split)
-df_test <- testing(data_split)
-rm(data_split)
+encode_ordinal <- function(x, order = unique(x)) {
+  x <- as.numeric(factor(x, levels = order, exclude = NULL)) - 1
+  x
+}
 
-```
-
-
-```{r Recipe}
-
-#create preprocessing recipe
-recipe0 <- recipe(bad_client ~ ., data=df_train) %>%
-  step_log(all_numeric_predictors(), signed=TRUE) %>% #log transform numeric features
-  step_ordinalscore(education) %>% #ordinal encode education
-  step_woe(all_nominal_predictors(), outcome="bad_client") %>% #target encode nominal features with WOE
-  step_center(all_predictors()) %>%  #center and scale numeric features
-  step_scale(all_predictors()) %>%
-  step_pca(ratio_amount, ratio_payment, num_comp=2) %>% #PCA ratio_amount and ratio_payment
-  step_interact(terms = ~ credit_amount:woe_product_type + age:income + 
-age:woe_family_status + age:woe_have_children) #add interactions
-
-
-#prep recipe on training data
-recipe0_prep <- prep(recipe0, training=df_train)
-
-
-#bake recipe on training and testing data
-df_train <- bake(recipe0_prep, new_data=df_train)
-df_test <- bake(recipe0_prep, new_data=df_test)
-
-
-#move outcome columns to start
-df_train <- df_train %>% relocate(bad_client, .before=credit_amount)
-df_test <- df_test %>% relocate(bad_client, .before=credit_amount)
-
-
-#create dataframes with only features
-train_x <- df_train[,-c(1)]
-test_x <- df_test[,-c(1)]
-
-
-#create numeric outcome vector
-train_y <- as.numeric(df_train$bad_client) - 1 
-
-
-#bind back training and testing data for mlr3 custom resampling
-df1 <- rbind(df_train, df_test)
-rm(recipe0, recipe0_prep)
+df$education <- encode_ordinal(df$education, order=levels(df$education))
 
 ```
 
 
-```{r DistEval, echo=FALSE}
+```{r PipelinePreproc}
 
-plot_histogram(df_train, binary_as_factor = FALSE, nrow=4L, ncol=5L)
+#create preprocessing pipeline
+
+#yeo-johnson transformation for numeric features
+pipe_yeo <- po("yeojohnson", standardize=FALSE)
+
+
+#weight of evidence encoding for nominal features
+encode_woe <- po("encodeimpact")
+
+
+#centering and scaling for numeric features
+pipe_center_scale <- po("scale")
+
+
+#add interaction terms with model matrix
+pipe_interact <- po("modelmatrix", formula = ~ . + credit_amount:product_type.No +
+                      credit_amount:product_type.Yes +
+                      age:income + age:family_status.No + age:family_status.Yes +
+                      age:have_children.No + age:have_children.Yes)
+
+
+#add minority class weights
+pipe_weights <- po("classweights")
+pipe_weights$param_set$values$minor_weight <- summary(df$bad_client)[1] /
+  summary(df$bad_client)[2]
+
+
+#create combined preprocessing pipeline (Graph in mlr3)
+graph_preproc <- pipe_yeo %>>% encode_woe %>>% pipe_center_scale %>>%
+  pipe_interact %>>% pipe_weights
 
 ```
 
 
+```{r mlr3Objects}
 
-### Creating mlr3 objects
+#create classification task
+task_credit <- as_task_classif(df, target="bad_client", positive="Yes")
+
+
+#create 5-folds resampling
+resample_cv <- rsmp("cv", folds=5L)
+
+
+#create performance measures
+source("mlr3CustomMeasures.R") #source custom implementation of Cohen's kappa measure
+measure_rec <- msr("classif.recall") 
+measure_prauc <- msr("classif.prauc") 
+measure_brier <- msr("classif.bbrier") 
+measure_kappa <- msr("classif.kappa") 
+measure_acc <- msr("classif.acc") 
+measure_time <- msr("time_both")
+measures_list <- c(measure_rec, measure_prauc, measure_brier, measure_kappa, 
+                   measure_acc, measure_time)
+
+
+#logloss, just as a tuning metric
+measure_log <- msr("classif.logloss")
+
+
+#create tuners
+tune_grid <- mlr3tuning::tnr("grid_search")
+tune_random <- mlr3tuning::tnr("random_search") 
+tune_hyper2 <- mlr3tuning::tnr("hyperband", eta=2) 
+tune_hyper3 <- mlr3tuning::tnr("hyperband", eta=3) 
+tune_anneal <- mlr3tuning::tnr("gensa") 
+
+
+#create tuning terminators
+term10 <- trm("evals", n_evals=10)
+term25 <- trm("evals", n_evals=25)
+term50 <- trm("evals", n_evals=50)
+term100 <- trm("evals", n_evals=100)
+term250 <- trm("evals", n_evals=250)
+term500 <- trm("evals", n_evals=500)
+term_none <- trm("none")
+
+```
+
 
 ### Approach to hyperparameter tuning
+
+```{r TuneAnneal, eval=FALSE}
+
+#create preprocessing + model pipeline (GraphLearner in mlr3)
+learner_glmnet <- as_learner(graph_preproc %>>% po("learner", 
+                                                   learner=lrn("classif.glmnet",
+                                                   predict_type="prob")))
+
+
+#create a search space for tuning
+space_glmnet <- ps(
+  classif.glmnet.alpha=p_dbl(lower=0, upper=1),
+  classif.glmnet.lambda=p_dbl(lower=0, upper=1)
+)
+
+
+#create autotuner object
+autotune_glmnet = AutoTuner$new(
+  learner=learner_glmnet,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term100,
+  tuner=tune_anneal,
+  search_space=space_glmnet
+)
+
+
+#train autotuner object
+set.seed(1922)
+with_progress(autotune_glmnet$train(task_credit))
+
+
+#extract tuning results archive as data table
+archive_glmnet <- as.data.table(autotune_glmnet$archive)
+#best tune: alpha 0.1231044 lambda 0.04147188 logloss 0.5871771
+
+
+#set graph learner parameters to best tuning results
+learner_glmnet$param_set$values <- autotune_glmnet$learner$param_set$values
+
+```
+
+
+```{r TuneHyper, eval=FALSE}
+
+#create transformation functions
+k_square <- function(k) {
+  k <- 2^k
+  k
+}
+
+k_power10 <- function(k) {
+  k <- 10^k
+  k
+}
+
+
+#create tuning space, with trafo and budget arguments
+space_svm = ps(
+  classif.svm.cost=p_int(1, 6, trafo=k_power10, tags="budget"),
+  classif.svm.gamma=p_int(-8, 2, trafo=k_square)
+)
+
+
+#create autotuner object
+autotune_svm = AutoTuner$new(
+  learner=learner_svm,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term_none,
+  tuner=tune_hyper2,
+  search_space=space_svm
+)
+
+```
+
 
 ### Classifiers and best tunes found
 
 #### Naive Bayes
 
+
+```{r LearnerBayes}
+
+#Naive Bayes classifier
+learner_bayes <- as_learner(graph_preproc %>>% 
+                              po("learner", 
+                                 learner=lrn("classif.naive_bayes",
+                                 predict_type="prob")))
+
+```
+
+
 #### glmnet
+
+
+```{r LearnerGlmnet}
+
+learner_glmnet <- as_learner(graph_preproc %>>% 
+                               po("learner", 
+                                  learner=lrn("classif.glmnet",
+                                              predict_type="prob",
+                                              alpha=0.1231044,
+                                              lambda=0.04147188)))
+
+```
+
 
 #### kNN
 
+
+```{r LearnerkNN}
+
+learner_knn <- as_learner(graph_preproc %>>% 
+                            po("learner", 
+                              learner=lrn("classif.kknn",
+                              predict_type="prob",
+                              kernel="optimal",
+                              scale=FALSE,
+                              k=129,
+                              distance=1.843605)))
+
+```
+
+
 #### SVM
+
+
+```{r LearnerSVM}
+
+#named class weights vector
+svm_weight <- c(1, pipe_weights$param_set$values$minor_weight)
+names(svm_weight) <- c("No", "Yes")
+
+
+#graph learner
+learner_svm <- as_learner(graph_preproc %>>% po("learner", 
+                                                learner=lrn("classif.svm",
+                                                            type="C-classification",
+                                                            class.weights=svm_weight,
+                                                            predict_type="prob",
+                                                            kernel="radial",
+                                                            scale=FALSE,
+                                                            cost=10,
+                                                            gamma=0.009167361)))
+
+```
+
 
 #### XGBoost
 
