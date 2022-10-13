@@ -5,6 +5,7 @@ library(tidyverse)
 library(GGally)
 library(DataExplorer)
 library(gt)
+library(ggedit)
 library(tidymodels)
 library(embed)
 library(mlr3verse)
@@ -286,85 +287,45 @@ ggpairs(df,
 #Preprocessing ####
 
 
-#split train-test data
-set.seed(1923)
-data_split <- initial_split(df, prop=4/5, strata=bad_client)
-df_train <- training(data_split)
-df_test <- testing(data_split)
-rm(data_split)
+#ordinal encode education manually
+encode_ordinal <- function(x, order = unique(x)) {
+  x <- as.numeric(factor(x, levels = order, exclude = NULL)) - 1
+  x
+}
+
+df$education <- encode_ordinal(df$education, order=levels(df$education))
 
 
-#create preprocessing recipe
-  #log transform 
-  #ordinal encode education
-  #nominal encode all other categoricals
-  #center and scale
-  #PCA ratio_amount and ratio_payment
-  #add interactions:
+#create preprocessing pipeline
+
+#boxcox numerics
+pipe_yeo <- po("yeojohnson", standardize=FALSE)
+
+#woe encode nominals
+encode_woe <- po("encodeimpact")
+
+#center and scale numerics
+pipe_center_scale <- po("scale")
+
+#add interactions:
     #credit_amount X product_type
     #age X income
     #age X family_status
     #age X have_children
-recipe0 <- recipe(bad_client ~ ., data=df_train) %>%
-  step_log(all_numeric_predictors(), signed=TRUE) %>%
-  step_ordinalscore(education) %>%
-  step_woe(all_nominal_predictors(), outcome="bad_client") %>%
-  step_center(all_predictors()) %>%
-  step_scale(all_predictors()) %>%
-  step_pca(ratio_amount, ratio_payment, num_comp=2) %>%
-  step_interact(terms = ~ credit_amount:woe_product_type + age:income + 
-age:woe_family_status + age:woe_have_children)
+pipe_interact <- po("modelmatrix", formula = ~ . + credit_amount:product_type.No +
+                      credit_amount:product_type.Yes +
+                      age:income + age:family_status.No + age:family_status.Yes +
+                      age:have_children.No + age:have_children.Yes)
+
+#add class weights
+pipe_weights <- po("classweights")
+pipe_weights$param_set$values$minor_weight <- summary(df$bad_client)[1] /
+  summary(df$bad_client)[2]
 
 
-#prep recipe on training data
-recipe0_prep <- prep(recipe0, training=df_train)
-
-
-#bake recipe on training and testing data
-df_train <- bake(recipe0_prep, new_data=df_train)
-df_test <- bake(recipe0_prep, new_data=df_test)
-
-
-#move outcome columns to start
-df_train <- df_train %>% relocate(bad_client, .before=credit_amount)
-df_test <- df_test %>% relocate(bad_client, .before=credit_amount)
-
-
-#create train_x and test_x
-train_x <- df_train[,-c(1)]
-test_x <- df_test[,-c(1)]
-
-
-#create numeric outcome vectors
-train_y <- as.numeric(df_train$bad_client) - 1 
-test_y <- as.numeric(df_test$bad_client) - 1
-
-
-#retrieve minority weight from training data
-minority_weight <- length(df_train$bad_client[df_train$bad_client=="No"]) /
-  length(df_train$bad_client[df_train$bad_client=="Yes"])
-
-
-#bind back training and testing data for mlr3 resampling
-df1 <- rbind(df_train, df_test)
-rm(recipe0, recipe0_prep)
-
-
-#test if the PCs of ratios are predictive
-ggplot(data=df_train, aes(x=bad_client, y=PC1)) + geom_boxplot()
-#PC1 similar to original ratio features
-ggplot(data=df_train, aes(x=bad_client, y=PC2)) + geom_boxplot()
-#PC2 similar to original ratio features
-
-
-#test distributions of transformed features
-plot_histogram(df_train, binary_as_factor = FALSE)
-#original numerics normalish
-#PCs not normal
-#education (ordinal) not normal
-#WOEs and their interactions not normal
-#age X income not normal, age X woe family and children normalish
-#credit X woe product not normal
+#create preprocessing graph
+graph_preproc <- pipe_yeo %>>% encode_woe %>>% pipe_center_scale %>>%
+  pipe_interact %>>% pipe_weights
 
 
 
@@ -372,30 +333,12 @@ plot_histogram(df_train, binary_as_factor = FALSE)
 #Modeling####
 
 
-##Create common objects####
+#task
+task_credit <- as_task_classif(df, target="bad_client", positive="Yes")
 
 
-#tasks
-task_train <- as_task_classif(df_train, target="bad_client", positive="Yes")
-task_test <- as_task_classif(df1, target="bad_client", positive="Yes")
-
-
-#assign class weights
-pipe_weights <- po("classweights")
-pipe_weights$param_set$values$minor_weight <- minority_weight
-task_train <- pipe_weights$train(list(task_train))[[1L]]
-task_test <- pipe_weights$train(list(task_test))[[1L]]
-
-
-#resamplings
-#5 fold, 5 repeats for tuning
-resample_cv <- rsmp("repeated_cv", folds=5L, repeats=5L)
-
-#custom resampling for testing
-id_train <- list(task_train$row_ids)
-id_test <- list(setdiff(task_test$row_ids, task_train$row_ids))
-resample_test <- rsmp("custom")
-resample_test$instantiate(task_test, train_sets=id_train, test_sets=id_test)
+#resampling: 5 folds
+resample_cv <- rsmp("cv", folds=5L)
 
 
 #performance measures
@@ -433,9 +376,10 @@ term500 <- trm("evals", n_evals=500)
 term_none <- trm("none")
 
 
-#Bayes learner
-learner_bayes <- lrn("classif.naive_bayes",
-                     predict_type="prob")
+#Bayes graph learner
+learner_bayes <- as_learner(graph_preproc %>>% po("learner", 
+                                                  learner=lrn("classif.naive_bayes",
+                                                  predict_type="prob")))
 #note: the nominal encoding may impact the performance
 
 
@@ -445,40 +389,60 @@ learner_bayes <- lrn("classif.naive_bayes",
 
 ###glmnet ####
 
+
+#graph learner
+learner_glmnet <- as_learner(graph_preproc %>>% po("learner", 
+                                                   learner=lrn("classif.glmnet",
+                                                   predict_type="prob")))
+
+
+
 #tuning space
-learner_glmnet1 <- lrn("classif.glmnet",
-                       predict_type="prob",
-                       alpha=to_tune(p_dbl(0,1)),
-                       lambda=to_tune(p_dbl(0,1)))
+space_glmnet <- ps(
+  classif.glmnet.alpha=p_dbl(lower=0, upper=1),
+  classif.glmnet.lambda=p_dbl(lower=0, upper=1)
+)
 
 
-#tuning instance
-tune_glmnet1 = TuningInstanceSingleCrit$new(task_train, learner_glmnet1, resample_cv, 
-                                           measure_log, term100,
-                                           store_benchmark_result = TRUE)
+
+#auto tuning
+autotune_glmnet = AutoTuner$new(
+  learner=learner_glmnet,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term100,
+  tuner=tune_anneal,
+  search_space=space_glmnet
+)
+
 
 #tune glmnet
-tune_anneal$initialize()
-set.seed(1923)
-with_progress(tune_anneal$optimize(tune_glmnet1))
+set.seed(1922)
+with_progress(autotune_glmnet$train(task_credit))
+#alpha 0.1231044 lambda 0.04147188 logloss 0.5871771
 
+#extract archive
+archive_glmnet <- as.data.table(autotune_glmnet$archive)
 
-tuneres_glmnet1 <- as.data.table(tune_glmnet1$archive)
-#tried any alpha from 0-0.6
-#tried any lambda from 0.0017 to 0.9
-#best: alpha 0.55389688 lambda 0.0047062116 logloss 0.5811211
-
-
-#set learner parameters to best tune
-learner_glmnet <- lrn("classif.glmnet",
-                      predict_type="prob",
-                      alpha=0.55389688,
-                      lambda=0.0047062116)
+#set best params to glmnet graph learner
+learner_glmnet$param_set$values <- autotune_glmnet$learner$param_set$values
 
 
 
 
 ###kNN ####
+
+
+#graph learner
+learner_knn <- as_learner(graph_preproc %>>% po("learner", 
+                                                   learner=lrn("classif.kknn",
+                                                               predict_type="prob",
+                                                               kernel="optimal",
+                                                               scale=FALSE)))
+
+
+
+#search space
 
 #trafo function
 k_square_odd <- function(k){
@@ -487,29 +451,32 @@ k_square_odd <- function(k){
 }
 
 #tuning space
-learner_knn1 <- lrn("classif.kknn",
-                    predict_type="prob",
-                    kernel="optimal",
-                    scale=FALSE,
-                    k=to_tune(p_int(1, 10, trafo=k_square_odd, tags="budget")),
-                    distance=to_tune(p_dbl(1, 2))
-                    )
+space_knn = ps(
+  classif.kknn.k=p_int(1, 10, trafo=k_square_odd, tags="budget"),
+  classif.kknn.distance=p_dbl(1, 2)
+)
 
 
-#tuning instance
-tune_knn1 = TuningInstanceSingleCrit$new(task_train, learner_knn1, resample_cv, 
-                                            measure_prauc, term_none,
-                                            store_benchmark_result = TRUE)
 
-#tune glmnet
-tune_hyper2$initialize()
-set.seed(1923)
-with_progress(tune_hyper2$optimize(tune_knn1))
+#auto tuning
+autotune_knn = AutoTuner$new(
+  learner=learner_knn,
+  resampling=resample_cv,
+  measure=measure_prauc,
+  terminator=term_none,
+  tuner=tune_hyper2,
+  search_space=space_knn
+)
 
 
-tuneres_knn1 <- as.data.table(tune_knn1$archive)
-#k 1025, distance 1.003422, prauc 0.2471221
-#try 34-1025
+#tune knn
+set.seed(1922)
+with_progress(autotune_knn$train(task_credit))
+
+#extract archive
+archive_knn <- as.data.table(autotune_knn$archive)
+#k 1025, dist 1.843605, prauc 0.2431451
+
 
 
 
@@ -520,41 +487,61 @@ k_times33 <- function(k) {
   k
 }
 
-learner_knn2 <- lrn("classif.kknn",
-                    predict_type="prob",
-                    kernel="optimal",
-                    scale=FALSE,
-                    k=to_tune(p_int(1, 30, trafo=k_times33, tags="budget")),
-                    distance=to_tune(p_dbl(1, 2))
+
+#tuning space
+space_knn2 = ps(
+  classif.kknn.k=p_int(1, 30, trafo=k_times33, tags="budget"),
+  classif.kknn.distance=p_dbl(1, 2)
 )
 
 
-#tuning instance
-tune_knn2 = TuningInstanceSingleCrit$new(task_train, learner_knn2, resample_cv, 
-                                         measure_prauc, term_none,
-                                         store_benchmark_result = TRUE)
 
-#tune glmnet
-tune_hyper2$initialize()
-set.seed(1923)
-with_progress(tune_hyper2$optimize(tune_knn2))
-
-tuneres_knn2 <- as.data.table(tune_knn2$archive)
-#k 257, distance 1.003422, prauc 0.2529354
+#auto tuning
+autotune_knn2 = AutoTuner$new(
+  learner=learner_knn,
+  resampling=resample_cv,
+  measure=measure_prauc,
+  terminator=term_none,
+  tuner=tune_hyper2,
+  search_space=space_knn2
+)
 
 
-#set learner parameters to best tune
-learner_knn <- lrn("classif.kknn",
-                   predict_type="prob",
-                   kernel="optimal",
-                   k=257,
-                   distance=1.003422)
+
+#tune knn2
+set.seed(1922)
+with_progress(autotune_knn2$train(task_credit))
+#
+
+
+#extract archive
+archive_knn2 <- as.data.table(autotune_knn2$archive)
+#k 129, dist 1.843605, prauc 0.2504462
+
+
+#set best params to knn graph learner
+learner_knn$param_set$values <- autotune_knn2$learner$param_set$values
 
 
 
 
 
 ###SVM ####
+
+#named class weights vector
+svm_weight <- c(1, learner_knn$param_set$values$classweights.minor_weight)
+names(svm_weight) <- c("No", "Yes")
+
+
+#graph learner
+learner_svm <- as_learner(graph_preproc %>>% po("learner", 
+                                                learner=lrn("classif.svm",
+                                                            type="C-classification",
+                                                            class.weights=svm_weight,
+                                                            predict_type="prob",
+                                                            kernel="radial",
+                                                            scale=FALSE)))
+
 
 #trafo functions
 k_square <- function(k) {
@@ -567,86 +554,73 @@ k_power10 <- function(k) {
   k
 }
 
-#named class weights vector
-svm_weight <- c(1, minority_weight)
-names(svm_weight) <- c("No", "Yes")
-
 
 #tuning space
-learner_svm1 <- lrn("classif.svm",
-                    type="C-classification",
-                    class.weights=svm_weight,
-                    predict_type="prob",
-                    kernel="radial",
-                    scale=FALSE,
-                    cost=to_tune(p_int(1, 6, trafo=k_power10, tags="budget")),
-                    gamma=to_tune(p_int(-8, 2, trafo=k_square)))
+space_svm = ps(
+  classif.svm.cost=p_int(1, 6, trafo=k_power10, tags="budget"),
+  classif.svm.gamma=p_int(-8, 2, trafo=k_square)
+)
 
 
 
-#tuning instance
-tune_svm1 = TuningInstanceSingleCrit$new(task_train, learner_svm1, resample_cv, 
-                                         measure_log, term_none,
-                                         store_benchmark_result = TRUE)
-
-#tune glmnet
-tune_hyper2$initialize()
-set.seed(1923)
-with_progress(tune_hyper2$optimize(tune_svm1))
-
-#results
-tuneres_svm1 <- as.data.table(tune_svm1$archive)
-#cost 1000, gamma 4, logloss 0.3713911
-#try costs around 1000, gamma>4
+#auto tuning
+autotune_svm = AutoTuner$new(
+  learner=learner_svm,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term_none,
+  tuner=tune_hyper2,
+  search_space=space_svm
+)
 
 
+#tune svm
+set.seed(1922)
+with_progress(autotune_svm$train(task_credit))
+
+#extract archive
+archive_svm <- as.data.table(autotune_svm$archive)
+#cost 100, gamma 0.0156250, logloss 0.3411680
 
 
-#tuning space 2, C around 1000, gamma>4
-k_150fold <- function(k) {
-  k <- k*150
+
+
+#tuning space 2, C from 1-100, gamma 0-0.1
+k_10fold <- function(k) {
+  k <- k*10
   k
 }
 
 
-learner_svm2 <- lrn("classif.svm",
-                    type="C-classification",
-                    class.weights=svm_weight,
-                    predict_type="prob",
-                    kernel="radial",
-                    scale=FALSE,
-                    cost=to_tune(p_int(1, 10, trafo=k_150fold, tags="budget")),
-                    gamma=to_tune(p_dbl(4, 8)))
+#tuning space
+space_svm2 = ps(
+  classif.svm.cost=p_int(1, 10, trafo=k_10fold, tags="budget"),
+  classif.svm.gamma=p_dbl(0, 0.1)
+)
 
 
 
-#tuning instance
-tune_svm2 = TuningInstanceSingleCrit$new(task_train, learner_svm2, resample_cv, 
-                                         measure_log, term_none,
-                                         store_benchmark_result = TRUE)
-
-#tune glmnet
-tune_hyper2$initialize()
-set.seed(1923)
-with_progress(tune_hyper2$optimize(tune_svm2))
-
-#results
-tuneres_svm2 <- as.data.table(tune_svm2$archive)
-#cost 750 gamma 4.916431 logloss 0.3718737
+#auto tuning
+autotune_svm2 = AutoTuner$new(
+  learner=learner_svm,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term_none,
+  tuner=tune_hyper2,
+  search_space=space_svm2
+)
 
 
+#tune svm2
+set.seed(1922)
+with_progress(autotune_svm2$train(task_credit))
 
+#extract archive
+archive_svm2 <- as.data.table(autotune_svm2$archive)
+#cost 10, gamma 0.009167361, logloss 0.3302667
 
-#learner with best parameters
-learner_svm <- lrn("classif.svm",
-                    type="C-classification",
-                    class.weights=svm_weight,
-                    predict_type="prob",
-                    kernel="radial",
-                    scale=FALSE,
-                    cost=750,
-                    gamma=4.916431)
-
+#set best params to svm graph learner
+learner_svm$param_set$values <- autotune_svm2$learner$param_set$values
 
 
 
@@ -656,142 +630,87 @@ learner_svm <- lrn("classif.svm",
 ###XGBoost ####
 
 
-####tune eta, max_delta_step ####
-
-#tuning space
-learner_xgb1 <- lrn("classif.xgboost",
-                   booster="gbtree",
-                   predict_type="prob",
-                   nthread=3,
-                   nrounds=5000,
-                   early_stopping_rounds=50,
-                   max_delta_step=to_tune(p_int(1,10, tags="budget")),
-                   eta=to_tune(p_dbl(0.1, 0.3)))
+#graph learner
+learner_xgb <- as_learner(graph_preproc %>>% po("learner", 
+                                                learner=lrn("classif.xgboost",
+                                                            booster="gbtree",
+                                                            predict_type="prob",
+                                                            nthread=3,
+                                                            nrounds=5000,
+                                                            early_stopping_rounds=50)))
 
 
 
-#tuning instance
-tune_xgb1 = TuningInstanceSingleCrit$new(task_train, learner_xgb1, resample_cv, 
-                                         measure_log, term_none,
-                                         store_benchmark_result = TRUE)
+####tune eta ####
 
-#tune xgboost1
-tune_hyper2$initialize()
-set.seed(1923)
-with_progress(tune_hyper2$optimize(tune_xgb1))
-
-#results
-tuneres_xgb1 <- as.data.table(tune_xgb1$archive)
-#eta 0.1081076, max_delta_step 1, logloss 0.6996111
-#bigger max delta steps are worse
+#search space
+space_xgb1 = ps(
+  classif.xgboost.eta=p_dbl(0.01, 0.05)
+)
 
 
+#auto tuning
+autotune_xgb1 = AutoTuner$new(
+  learner=learner_xgb,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term25,
+  tuner=tune_anneal,
+  search_space=space_xgb1
+)
 
 
-#check against max_delta_step = 0
+#tune xgb1
+set.seed(1922)
+with_progress(autotune_xgb1$train(task_credit))
 
-#tuning space
-learner_xgb1.1 <- learner_xgb1
-learner_xgb1.1$param_set$values$max_delta_step <- 0
+#extract archive
+archive_xgb1 <- as.data.table(autotune_xgb1$archive)
+#eta 0.01013721, logloss 0.553274
 
-
-
-#tuning instance
-tune_xgb1.1 = TuningInstanceSingleCrit$new(task_train, learner_xgb1.1, resample_cv, 
-                                         measure_log, term10,
-                                         store_benchmark_result = TRUE)
-
-#tune xgboost1.1
-tune_anneal$initialize()
-set.seed(1923)
-with_progress(tune_anneal$optimize(tune_xgb1.1))
-
-#results
-tuneres_xgb1.1 <- as.data.table(tune_xgb1.1$archive)
-#eta 0.1, max_delta_step 0, logloss 0.6789039
-
+#retrieve eta
+learner_xgb$param_set$values <- autotune_xgb1$learner$param_set$values
 
 
 
 
 ####tune tree complexity ####
 
-
-#tuning space
-k_twofold <- function(k){
+#trafo
+k_twofold <- function(k) {
   k <- k*2
   k
 }
 
-learner_xgb2 <- learner_xgb1
-learner_xgb2$param_set$values$max_delta_step <- 0
-learner_xgb2$param_set$values$eta <- 0.1
-learner_xgb2$param_set$values$max_depth <- to_tune(p_int(1, 6, 
-                                                         trafo=k_twofold))
-learner_xgb2$param_set$values$min_child_weight <- to_tune(p_int(1, 10,
-                                                                tags="budget"))
+#search space
+space_xgb2 = ps(
+  classif.xgboost.max_depth=p_int(1, 10, trafo=k_twofold),
+  classif.xgboost.min_child_weight=p_int(1, 20, trafo=k_twofold, tags="budget"),
+  classif.xgboost.max_delta_step=p_int(0, 5, trafo=k_twofold)
+)
 
 
-
-#tuning instance
-tune_xgb2 = TuningInstanceSingleCrit$new(task_train, learner_xgb2, resample_cv, 
-                                         measure_log, term_none,
-                                         store_benchmark_result = TRUE)
-
-#tune xgboost2
-tune_hyper2$initialize()
-set.seed(1923)
-with_progress(tune_hyper2$optimize(tune_xgb2))
-
-#results
-tuneres_xgb2<- as.data.table(tune_xgb2$archive)
-#12 max_depth, 1 min_child_weight, logloss 0.6404987
-#12 max_depth, 2 min_child_weight, logloss 0.6087693
-#12 max depth, 5 min_child_weight, logloss 0.5768753
-  #very close to max_depth 10's performance. don't try higher max_depth?
-#best tune: max depth 12, min child weight 10, logloss 0.5579934
-  #try higher
+#auto tuning
+autotune_xgb2 = AutoTuner$new(
+  learner=learner_xgb,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term_none,
+  tuner=tune_hyper2,
+  search_space=space_xgb2
+)
 
 
+#tune xgb2
+set.seed(1922)
+with_progress(autotune_xgb2$train(task_credit))
 
+#extract archive
+archive_xgb2 <- as.data.table(autotune_xgb2$archive)
+#max depth=12  min_child_weight=20  max_delta_step=8 logloss 0.4427219
 
-#tuning instance 2.1: max depth >12, min_child_weight >10
-k_fourfold <- function(k) {
-  k <- k*4
-  k
-}
-
-k_fivefold <- function(k) {
-  k <- k*5
-  k
-}
-
-
-learner_xgb2.1 <- learner_xgb2
-learner_xgb2.1$param_set$values$max_depth <- to_tune(p_int(3, 5, 
-                                                         trafo=k_fourfold))
-learner_xgb2.1$param_set$values$min_child_weight <- to_tune(p_int(2, 4,
-                                                                trafo=k_fivefold))
-
-
-
-tune_xgb2.1 = TuningInstanceSingleCrit$new(task_train, learner_xgb2.1, resample_cv, 
-                                         measure_log, term_none,
-                                         store_benchmark_result = TRUE)
-
-#tune xgboost2.1
-tune_grid$initialize()
-set.seed(1923)
-with_progress(tune_grid$optimize(tune_xgb2.1))
-
-#results
-tuneres_xgb2.1<- as.data.table(tune_xgb2.1$archive)
-#best performing least complex tune:
-  #max_depth=12, min_child_weight 20, logloss 0.5400153
-
-
-
-
+#retrieve values
+learner_xgb$param_set$values <- autotune_xgb2$learner$param_set$values
 
 
 
@@ -799,29 +718,35 @@ tuneres_xgb2.1<- as.data.table(tune_xgb2.1$archive)
 ####tune regularization ####
 
 
-#tuning space
-learner_xgb3 <- learner_xgb2
-learner_xgb3$param_set$values$max_depth <- 12
-learner_xgb3$param_set$values$min_child_weight <- 20
-learner_xgb3$param_set$values$gamma <- to_tune(p_dbl(0, 1))
-learner_xgb3$param_set$values$lambda <- to_tune(p_dbl(0, 2))
-learner_xgb3$param_set$values$alpha <- to_tune(p_dbl(0, 1))
+#search space
+space_xgb3 = ps(
+  classif.xgboost.gamma=p_dbl(0, 1),
+  classif.xgboost.lambda=p_dbl(0, 2),
+  classif.xgboost.alpha=p_dbl(0, 1)
+)
 
 
+#auto tuning
+autotune_xgb3 = AutoTuner$new(
+  learner=learner_xgb,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term25,
+  tuner=tune_anneal,
+  search_space=space_xgb3
+)
 
-#tuning instance
-tune_xgb3 = TuningInstanceSingleCrit$new(task_train, learner_xgb3, resample_cv, 
-                                         measure_log, term50,
-                                         store_benchmark_result = TRUE)
 
-#tune xgboost3
-tune_anneal$initialize()
-set.seed(1923)
-with_progress(tune_anneal$optimize(tune_xgb3))
+#tune xgb3
+set.seed(1922)
+with_progress(autotune_xgb3$train(task_credit))
 
-#results
-tuneres_xgb3 <- as.data.table(tune_xgb3$archive)
-#gamma 0.97364277 lambda 0.86335184 alpha 0.4540298 logloss 0.4312961
+#extract archive
+archive_xgb3 <- as.data.table(autotune_xgb3$archive)
+#gamma=0.73399971  lambda=0.9294227 alpha=0.14594723  logloss=0.4264966
+
+#retrieve regularization
+learner_xgb$param_set$values <- autotune_xgb3$learner$param_set$values
 
 
 
@@ -830,55 +755,67 @@ tuneres_xgb3 <- as.data.table(tune_xgb3$archive)
 ####tune randomization ####
 
 
-#tuning space
-learner_xgb4 <- learner_xgb3
-learner_xgb4$param_set$values$gamma <- 0.97364277
-learner_xgb4$param_set$values$lambda <- 0.86335184
-learner_xgb4$param_set$values$alpha <- 0.4540298
-learner_xgb4$param_set$values$subsample <- to_tune(p_dbl(0.5, 1))
-learner_xgb4$param_set$values$colsample_bytree <- to_tune(p_dbl(0.5, 1))
+#search space
+space_xgb4 = ps(
+  classif.xgboost.subsample=p_dbl(0.5, 1),
+  classif.xgboost.colsample_bytree=p_dbl(0.5, 1)
+)
+
+
+#auto tuning
+autotune_xgb4 = AutoTuner$new(
+  learner=learner_xgb,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term10,
+  tuner=tune_anneal,
+  search_space=space_xgb4
+)
+
+
+#tune xgb4
+set.seed(1922)
+with_progress(autotune_xgb4$train(task_credit))
+
+#extract archive
+archive_xgb4 <- as.data.table(autotune_xgb4$archive)
+#interrupted: not helping
 
 
 
-#tuning instance
-tune_xgb4 = TuningInstanceSingleCrit$new(task_train, learner_xgb4, resample_cv, 
-                                         measure_log, term50,
-                                         store_benchmark_result = TRUE)
-
-#tune xgboost4
-tune_anneal$initialize()
-set.seed(1923)
-with_progress(tune_anneal$optimize(tune_xgb4))
-
-#results
-tuneres_xgb4 <- as.data.table(tune_xgb4$archive)
-#interrupted: makes it worse
 
 
 
 #### retune eta ####
 
-#tuning space
-learner_xgb5 <- learner_xgb4
-learner_xgb5$param_set$values$subsample <- 1
-learner_xgb5$param_set$values$colsample_bytree <- 1
-learner_xgb5$param_set$values$eta <- to_tune(p_dbl(0.01, 0.3))
+
+#search space
+space_xgb5 = ps(
+  classif.xgboost.eta=p_dbl(0.01, 0.2)
+)
 
 
+#auto tuning
+autotune_xgb5 = AutoTuner$new(
+  learner=learner_xgb,
+  resampling=resample_cv,
+  measure=measure_log,
+  terminator=term25,
+  tuner=tune_anneal,
+  search_space=space_xgb5
+)
 
-#tuning instance
-tune_xgb5 = TuningInstanceSingleCrit$new(task_train, learner_xgb5, resample_cv, 
-                                         measure_log, term50,
-                                         store_benchmark_result = TRUE)
 
-#tune xgboost5
-tune_anneal$initialize()
-set.seed(1923)
-with_progress(tune_anneal$optimize(tune_xgb5))
+#tune xgb5
+set.seed(1922)
+with_progress(autotune_xgb5$train(task_credit))
 
-#results
-tuneres_xgb5 <- as.data.table(tune_xgb5$archive)
-#eta 0.09353067, logloss 0.4303643
+#extract archive
+archive_xgb5 <- as.data.table(autotune_xgb5$archive)
+#eta=0.06444704  logloss=0.4259129  
+
+#retrieve eta
+learner_xgb$param_set$values <- autotune_xgb5$learner$param_set$values
 
 
 
@@ -887,9 +824,20 @@ tuneres_xgb5 <- as.data.table(tune_xgb5$archive)
 #### tune nrounds ####
 
 
+#retrieve preprocessed data
+task_trained <- graph_preproc$train(task_credit)
+df_train <- task_trained$classweights.output$data()
+x_train <- df_train[,-c(1)]
+y_train <- df_train[,1]
+y_train <- c(as.numeric(y_train$bad_client)-1)
+y_train <- abs(y_train-1)
+weight_xgb <- task_trained$classweights.output$weights$weight
+
+
 #create XGB data matrix
-xgb_train <- xgb.DMatrix(data=as.matrix(train_x), label=train_y,
-                         weight=task_train$weights$weight)
+xgb_train <- xgb.DMatrix(data=as.matrix(x_train), 
+                         label=y_train,
+                         weight=weight_xgb)
 
 
 #create xgb params list
@@ -897,33 +845,29 @@ xgb_params <- list (
   booster="gbtree",
   objective="binary:logistic",
   nthread=3,
-  max_delta_step=0,
-  eta=0.09353067,
+  max_delta_step=8,
+  eta=0.06444704,
   max_depth=12,
   min_child_weight=20,
-  subsample=1,
-  colsample_bytree=1,
-  gamma=0.9736428,
-  lambda=0.8633518,
-  alpha=0.4540298
+  gamma=0.73399971,
+  lambda=0.9294227,
+  alpha=0.14594723
 )
 
 
 #run xgb.cv
-set.seed(1923)
+set.seed(1922)
 xgb_cv <- xgb.cv(xgb_params, xgb_train, nfold=5, verbose=TRUE, nrounds=5000,
                    early_stopping_rounds = 50)
-#16 rounds
-#train-logloss:0.464007+0.009111
-#test-logloss:0.612952+0.039875
+#27 rounds
+#train-logloss:0.430903+0.003545
+#test-logloss:0.625221+0.033639
 #U-shaped crossvalidation
 
 
 
 #final learner with best tune
-learner_xgb <- learner_xgb5
-learner_xgb$param_set$values$eta <- 0.09353067
-learner_xgb$param_set$values$nrounds <- 16
+learner_xgb$param_set$values$classif.xgboost.nrounds <- 27
 
 
   
@@ -936,18 +880,24 @@ learner_xgb$param_set$values$nrounds <- 16
 ### Perform benchmarking ####
 
 #create baseline learner that predicts the class prob distributions
-learner_baseline <- lrn("classif.featureless",
-                        predict_type="prob",
-                        method="weighted.sample")
+learner_baseline <- as_learner(graph_preproc %>>% 
+                                 po("learner", 
+                                    learner=lrn("classif.featureless",
+                                    predict_type="prob",
+                                    method="weighted.sample")))
+  
+  
+  
+
 
 
 #create benchmark grid
-benchmark_test = benchmark_grid(tasks=task_test,
+benchmark_test = benchmark_grid(tasks=task_credit,
                                    learn=list(learner_baseline, learner_bayes, 
                                               learner_glmnet,
                                               learner_knn, learner_svm,
                                               learner_xgb),
-                                   resamplings=resample_test)
+                                   resamplings=resample_cv)
 
 
 
@@ -959,6 +909,8 @@ benchmarkres = benchmark(benchmark_test, store_models=TRUE)
 #save average benchmarking results
 benchmarkres_table <- benchmarkres$aggregate(measures_list)
 
+#save all benchmarking round results
+benchmarkres_all <- benchmarkres$score(measures_list)
 
 
 
@@ -968,6 +920,7 @@ benchmarkres_table <- benchmarkres$aggregate(measures_list)
 #prc curves
 prc_plot <- mlr3viz::autoplot(benchmarkres, type="prc")
 prc_plot <- prc_plot + 
+  geom_line(aes(x=x, y=y, color=modname)) +
   geom_ribbon(aes(x=x, y=y, ymin=0, ymax=y, fill=modname), alpha=0.075) +
   labs(x="Recall", y="Precision",
        title="Precision-recall curves of loan client classifiers",
@@ -982,6 +935,9 @@ prc_plot <- prc_plot +
 
 #line size
 prc_plot$layers[[1]]$aes_params$size=0.75
+
+#supress confidence bands
+prc_plot <- remove_geom(p=prc_plot, geom="smooth")
 
 prc_plot
 
@@ -1007,7 +963,7 @@ tb_perf <- gt(data=df_metrics, rowname_col = 1) %>%
               cell_text(weight="bold"))) %>% 
   data_color(columns=c(2,3,5,6), colors=scales::col_numeric(
     palette=c("red", "green"),
-    domain=c(-0.006,1)
+    domain=c(-0.0023,1)
   )) %>%
   data_color(columns=c(4), colors=scales::col_numeric(
     palette=c("green", "red"),
