@@ -28,10 +28,9 @@ library(GGally) #exploratory analysis
 library(DataExplorer) #exploratory analysis
 library(patchwork) #combining ggplot2 objects
 library(gt) #data tables
-library(tidymodels) #preprocessing
-library(embed) #encoding
+#library(ggedit) #editing ggplot2 objects
 library(mlr3verse) #loads various mlr3 machine learning packages
-library(mlr3hyperband) #hyperband tuning algorithm
+library(mlr3hyperband) #hyperband tuning algorithm with mlr3
 library(xgboost) #regularized gradient boosting
 
 ```
@@ -153,108 +152,25 @@ summary(df)
 ggpairs(df,
         columns=c("credit_amount", "credit_term", "age", "income", "bad_client"),
         mapping=(aes(color=bad_client, fill=bad_client,  alpha=0.2)),
-        title="Numeric features and outcome") +
+        title="Numeric features: Distributions, correlations and relationships with outcome",
+        progress=FALSE) +
   scale_color_manual(values=c("#00BFC4", "#F8766D")) +
-  scale_fill_manual(values=c("#00BFC4", "#F8766D"))
+  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
+  theme_bw()
 
 ```
 
 
 ### Categorical features
 
-```{r EDACatLoop, echo=FALSE}
+```{r EDACat, echo=FALSE, fig.keep="first"}
 
-plotno <- 1
-for (i in c(1, 5, 6:9, 11:13)){
-  y_val <- df[,i]
-  p <- ggplot(df, aes(y=!!y_val, color=bad_client, fill=bad_client)) +
-    geom_bar(position="stack", alpha=0.5) +
-    scale_color_manual(values=c("#00BFC4", "#F8766D")) +
-    scale_fill_manual(values=c("#00BFC4", "#F8766D"))
-  
-  assign(paste0("bar", plotno), p)
-  plotno <- plotno + 1
-}
-rm(p, plotno, i, y_val)
-
-bar1 <- bar1 + labs(y="month", x="")
-bar2 <- bar2 + labs(y="sex", x="")
-bar3 <- bar3 + labs(y="education", x="Count")
-bar4 <- bar4 + labs(y="product_type", x="Count")
-bar5 <- bar5 + labs(y="have_children", x="")
-bar6 <- bar6 + labs(y="region", x="")
-bar9 <- bar9 + labs(y="prev_client", x="")
-bar8 <- bar8 + labs(y="family_status", x="Count")
-bar9 <- bar9 + labs(y="phone_operator", x="Count")
-
-```
-
-```{r EDACat1, echo=FALSE}
-
-(bar1 | bar2) / (bar3 | bar4) +
-  plot_layout(guides="collect") +
-  plot_annotation(title="Categorical features, colored by outcome")
+plot_bar(df, by="bad_client", title="Categorical features, broken down by the outcome",
+         ggtheme=theme_minimal())
 
 ```
 
 
-```{r EDACat2, echo=FALSE}
-
-(bar5 | bar6 | bar9) / (bar7 | bar8) +
-  plot_layout(guides="collect") +
-  plot_annotation(title="Categorical features, colored by outcome")
-
-```
-
-
-### Interaction terms
-
-```{r AgeXIncome, echo=FALSE}
-
-ggplot(df, aes(age, income, color=bad_client)) + geom_point() +
-  geom_smooth() + 
-  labs(title="Interaction of age and income for loan request classification") + 
-  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
-  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
-  theme_bw()
-
-```
-
-
-```{r AgeXFamilyStatus, echo=FALSE}
-
-ggplot(df, aes(family_status, age, fill=bad_client)) + 
-  geom_boxplot(width=0.5, lwd=0.5) + stat_boxplot(geom="errorbar", width=0.5, lwd=0.5) +
-  labs(title="Interaction of age and family status for loan request classification") + 
-  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
-  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
-  theme_bw()
-
-```
-
-
-```{r AgeXHaveChildren, echo=FALSE}
-
-ggplot(df, aes(have_children, age, fill=bad_client)) + 
-  geom_boxplot(width=0.5, lwd=0.5) + stat_boxplot(geom="errorbar", width=0.5, lwd=0.5) +
-  labs(title="Interaction of age and having children for loan request classification") + 
-  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
-  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
-  theme_bw()
-
-```
-
-
-```{r CreditAmountXProductType, echo=FALSE}
-
-ggplot(df, aes(product_type, credit_amount, fill=bad_client)) + 
-  geom_boxplot(width=0.5, lwd=0.5) + stat_boxplot(geom="errorbar", width=0.5, lwd=0.5) +
-  labs(title="Interaction of credit amount and product type for loan request classification") + 
-  scale_color_manual(values=c("#00BFC4", "#F8766D")) +
-  scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
-  theme_bw()
-
-```
 
 
 ## Feature engineering
@@ -283,9 +199,10 @@ df <- df %>% mutate(ratio_payment = round(payment / income, 2), .after=payment)
 ggpairs(df,
         columns=c("payment", "ratio_amount", "ratio_payment", "bad_client"),
         mapping=(aes(color=bad_client, fill=bad_client, alpha=0.5)),
-        title="New features and outcome") +
+        title="New features and the outcome") +
         scale_color_manual(values=c("#00BFC4", "#F8766D")) +
-        scale_fill_manual(values=c("#00BFC4", "#F8766D"))
+        scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
+  theme_bw()
 
 ```
 
@@ -473,7 +390,7 @@ autotune_svm = AutoTuner$new(
 
 ```{r LearnerBayes}
 
-#Naive Bayes classifier
+#Naive Bayes graph learner
 learner_bayes <- as_learner(graph_preproc %>>% 
                               po("learner", 
                                  learner=lrn("classif.naive_bayes",
@@ -487,6 +404,7 @@ learner_bayes <- as_learner(graph_preproc %>>%
 
 ```{r LearnerGlmnet}
 
+#glmnet graph learner
 learner_glmnet <- as_learner(graph_preproc %>>% 
                                po("learner", 
                                   learner=lrn("classif.glmnet",
@@ -502,6 +420,7 @@ learner_glmnet <- as_learner(graph_preproc %>>%
 
 ```{r LearnerkNN}
 
+#kNN graph learner
 learner_knn <- as_learner(graph_preproc %>>% 
                             po("learner", 
                               learner=lrn("classif.kknn",
@@ -524,7 +443,7 @@ svm_weight <- c(1, pipe_weights$param_set$values$minor_weight)
 names(svm_weight) <- c("No", "Yes")
 
 
-#graph learner
+#SVM graph learner
 learner_svm <- as_learner(graph_preproc %>>% po("learner", 
                                                 learner=lrn("classif.svm",
                                                             type="C-classification",
@@ -540,6 +459,132 @@ learner_svm <- as_learner(graph_preproc %>>% po("learner",
 
 #### XGBoost
 
+
+```{r}
+
+#XGBoost graph learner
+learner_xgb <- as_learner(graph_preproc %>>% po("learner", 
+                                                learner=lrn("classif.xgboost",
+                                                            booster="gbtree",
+                                                            predict_type="prob",
+                                                            nthread=3,
+                                                            nrounds=27,
+                                                            eta=0.06444704,
+                                                            max_depth=12,
+                                                            min_child_weight=20,
+                                                            max_delta_step=8,
+                                                            gamma=0.73399971,
+                                                            lambda=0.9294227,
+                                                            alpha=0.14594723)))
+
+
+```
+
+
 ### Benchmarking
+
+
+```{r Benchmark}
+
+#create baseline learner that predicts the class probabilities as the class frequencies
+learner_baseline <- as_learner(graph_preproc %>>% 
+                                 po("learner", 
+                                    learner=lrn("classif.featureless",
+                                    predict_type="prob",
+                                    method="weighted.sample")))
+
+  
+#create benchmark grid
+benchmark_test = benchmark_grid(tasks=task_credit,
+                                   learn=list(learner_baseline, learner_bayes, 
+                                              learner_glmnet,
+                                              learner_knn, learner_svm,
+                                              learner_xgb),
+                                   resamplings=resample_cv)
+
+
+#perform benchmarking
+set.seed(1923)
+benchmarkres = benchmark(benchmark_test, store_models=TRUE)
+
+
+#save average benchmarking results
+benchmarkres_table <- benchmarkres$aggregate(measures_list)
+
+```
+
+
+```{r MetricsTable, echo=FALSE}
+
+#dataframe of metrics
+df_metrics <- benchmarkres_table[,c(4, 7:12)]
+colnames(df_metrics) <- c("Classifier", "Recall", "PRAUC",
+                              "Brier score", "Cohen's kappa", "Accuracy", "Time")
+df_metrics[1:6, 1] <- c("Baseline", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")
+df_metrics[,2:6] <- round(df_metrics[,2:6], 4)
+
+
+#gt table
+tb_perf <- gt(data=df_metrics, rowname_col = 1) %>% 
+  tab_header(title="Performance metrics of loan client classifiers",
+             subtitle="Averages of 5-folds crossvalidation. Threshold probability=0.5") %>% 
+  opt_table_font(font=list(google_font("Calibri"), default_fonts())) %>% 
+  cols_align(align = "center", columns = everything()) %>% 
+  tab_style(locations=cells_column_labels(columns=everything()), 
+            style=list(
+              cell_borders(sides="bottom", weight=px(3)), 
+              cell_text(weight="bold"))) %>% 
+  data_color(columns=c(2,3,5,6), colors=scales::col_numeric(
+    palette=c("red", "green"),
+    domain=c(-0.0023,1)
+  )) %>%
+  data_color(columns=c(4), colors=scales::col_numeric(
+    palette=c("green", "red"),
+    domain=c(0,2)
+    )) %>%
+      data_color(columns=c(7), colors=scales::col_numeric(
+        palette=c("green", "red"),
+        domain=c(0,max(df_metrics[,7]))
+        ))
+
+
+#call table
+tb_perf
+
+```
+
+
+
+```{r PRCCurves, echo=FALSE}
+
+#attach ggedit library (not before because it breaks ggpairs)
+library(ggedit)
+
+#make prc plot with mlr3 autoplot, modify resulting ggplot2 object
+prc_plot <- mlr3viz::autoplot(benchmarkres, type="prc")
+prc_plot <- prc_plot + 
+  geom_line(aes(x=x, y=y, color=modname)) +
+  #geom_ribbon(aes(x=x, y=y, ymin=0, ymax=y, fill=modname), alpha=0.075) +
+  labs(x="Recall", y="Precision",
+       title="Precision-recall curves of loan client classifiers",
+       subtitle="Baseline classifier predicts the class frequencies as the probability of each class",
+       color="Classifiers",
+       fill="Classifiers") + 
+  theme(legend.position = "right") + 
+  scale_color_brewer(palette="Dark2", labels=c("Baseline", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")) + 
+  #scale_fill_brewer(palette="Dark2", labels=c("Baseline", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoost")) +
+  theme_bw()
+
+#line size
+prc_plot$layers[[2]]$aes_params$size=1
+
+#supress confidence bands
+prc_plot <- remove_geom(p=prc_plot, geom="smooth")
+
+#call plot
+prc_plot
+
+```
+
 
 ## Conclusions
