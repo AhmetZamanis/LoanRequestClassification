@@ -406,6 +406,7 @@ space_glmnet <- ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_glmnet = AutoTuner$new(
   learner=learner_glmnet,
   resampling=resample_cv,
@@ -459,6 +460,7 @@ space_knn = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_knn = AutoTuner$new(
   learner=learner_knn,
   resampling=resample_cv,
@@ -497,6 +499,7 @@ space_knn2 = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_knn2 = AutoTuner$new(
   learner=learner_knn,
   resampling=resample_cv,
@@ -564,6 +567,7 @@ space_svm = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_svm = AutoTuner$new(
   learner=learner_svm,
   resampling=resample_cv,
@@ -601,6 +605,7 @@ space_svm2 = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_svm2 = AutoTuner$new(
   learner=learner_svm,
   resampling=resample_cv,
@@ -650,6 +655,7 @@ space_xgb1 = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_xgb1 = AutoTuner$new(
   learner=learner_xgb,
   resampling=resample_cv,
@@ -691,6 +697,7 @@ space_xgb2 = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_xgb2 = AutoTuner$new(
   learner=learner_xgb,
   resampling=resample_cv,
@@ -727,6 +734,7 @@ space_xgb3 = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_xgb3 = AutoTuner$new(
   learner=learner_xgb,
   resampling=resample_cv,
@@ -763,6 +771,7 @@ space_xgb4 = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_xgb4 = AutoTuner$new(
   learner=learner_xgb,
   resampling=resample_cv,
@@ -796,6 +805,7 @@ space_xgb5 = ps(
 
 
 #auto tuning
+set.seed(1922)
 autotune_xgb5 = AutoTuner$new(
   learner=learner_xgb,
   resampling=resample_cv,
@@ -892,6 +902,7 @@ learner_baseline <- as_learner(graph_preproc %>>%
 
 
 #create benchmark grid
+set.seed(1922)
 benchmark_test = benchmark_grid(tasks=task_credit,
                                    learn=list(learner_baseline, learner_bayes, 
                                               learner_glmnet,
