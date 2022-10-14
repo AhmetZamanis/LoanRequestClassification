@@ -259,6 +259,7 @@ ggpairs(df,
 
 ```{r OrdinalEncode}
 
+#function to perform ordinal encoding on a column
 encode_ordinal <- function(x, order = unique(x)) {
   x <- as.numeric(factor(x, levels = order, exclude = NULL)) - 1
   x
@@ -273,32 +274,32 @@ df$education <- encode_ordinal(df$education, order=levels(df$education))
 
 #create preprocessing pipeline
 
-#yeo-johnson transformation for numeric features
+#yeo-johnson transformation
 pipe_yeo <- po("yeojohnson", standardize=FALSE)
 
 
-#weight of evidence encoding for nominal features
+#weight of evidence encoding
 encode_woe <- po("encodeimpact")
 
 
-#centering and scaling for numeric features
+#centering and scaling
 pipe_center_scale <- po("scale")
 
 
-#add interaction terms with model matrix
+#adding interaction terms with model matrix
 pipe_interact <- po("modelmatrix", formula = ~ . + credit_amount:product_type.No +
                       credit_amount:product_type.Yes +
                       age:income + age:family_status.No + age:family_status.Yes +
                       age:have_children.No + age:have_children.Yes)
 
 
-#add minority class weights
+#adding minority class weights
 pipe_weights <- po("classweights")
 pipe_weights$param_set$values$minor_weight <- summary(df$bad_client)[1] /
   summary(df$bad_client)[2]
 
 
-#create combined preprocessing pipeline (Graph in mlr3)
+#create combined preprocessing pipeline (called Graph in mlr3)
 graph_preproc <- pipe_yeo %>>% encode_woe %>>% pipe_center_scale %>>%
   pipe_interact %>>% pipe_weights
 
@@ -327,7 +328,7 @@ measures_list <- c(measure_rec, measure_prauc, measure_brier, measure_kappa,
                    measure_acc, measure_time)
 
 
-#logloss, just as a tuning metric
+#create logloss measure, just as a tuning metric
 measure_log <- msr("classif.logloss")
 
 
@@ -379,7 +380,7 @@ autotune_glmnet = AutoTuner$new(
 )
 
 
-#train autotuner object
+#train autotuner object on the classification task
 set.seed(1922)
 with_progress(autotune_glmnet$train(task_credit))
 
@@ -389,7 +390,7 @@ archive_glmnet <- as.data.table(autotune_glmnet$archive)
 #best tune: alpha 0.1231044 lambda 0.04147188 logloss 0.5871771
 
 
-#set graph learner parameters to best tuning results
+#set graph learner parameters to best tune from autotuner
 learner_glmnet$param_set$values <- autotune_glmnet$learner$param_set$values
 
 ```
@@ -429,7 +430,7 @@ autotune_svm = AutoTuner$new(
 ```
 
 
-### Classifiers and best tunes found
+### Classifiers, with the best tunes found
 
 #### Naive Bayes
 
@@ -506,7 +507,7 @@ learner_svm <- as_learner(graph_preproc %>>% po("learner",
 #### XGBoost
 
 
-```{r}
+```{r, LearnerXGBoost}
 
 #XGBoost graph learner
 learner_xgb <- as_learner(graph_preproc %>>% po("learner", 
@@ -530,9 +531,9 @@ learner_xgb <- as_learner(graph_preproc %>>% po("learner",
 ### Benchmarking
 
 
-```{r Benchmark}
+```{r Benchmark, results="hide"}
 
-#create baseline learner that predicts the class probabilities as the class frequencies
+#create baseline learner
 learner_baseline <- as_learner(graph_preproc %>>% 
                                  po("learner", 
                                     learner=lrn("classif.featureless",
