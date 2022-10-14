@@ -494,7 +494,7 @@ benchmarkres = benchmark(benchmark_test, store_models=TRUE)
 benchmarkres_table <- benchmarkres$aggregate(measures_list)
 ```
 
-![](./Report_files/figure-gfm/MetricTable.png)<!-- -->
+<img src="./Report_files/figure-gfm/MetricTable.png" width="75%" height="75%" />
 
 ![](Report_files/figure-gfm/PRCCurves-1.png)<!-- -->
 

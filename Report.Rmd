@@ -564,7 +564,7 @@ benchmarkres_table <- benchmarkres$aggregate(measures_list)
 ```
 
 
-```{r MetricsTable, echo=FALSE}
+```{r MetricsTable, echo=FALSE, out.width="75%", out.height="75%"}
 
 #dataframe of metrics
 df_metrics <- benchmarkres_table[,c(4, 7:12)]
@@ -600,7 +600,7 @@ perf_tb <- gt(data=df_metrics, rowname_col = 1) %>%
 gtsave(data=perf_tb, filename="./Report_files/figure-gfm/MetricTable.png")
 
 #load saved png
-knitr::include_graphics("./Report_files/figure-gfm/MetricTable.png")
+knitr::include_graphics("./Report_files/figure-gfm/MetricTable.png", dpi=NA)
 
 ```
 
