@@ -163,14 +163,60 @@ ggpairs(df,
 
 ### Categorical features
 
-```{r EDACat, echo=FALSE, fig.keep="first"}
+```{r EDACat, echo=FALSE}
 
-plot_bar(df, by="bad_client", title="Categorical features, broken down by the outcome",
-         ggtheme=theme_minimal())
+#acquire grouped dataframes with frequencies
+df_bar1 <- df %>% group_by(month, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+df_bar2 <- df %>% group_by(sex, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+df_bar3 <- df %>% group_by(education, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+df_bar4 <- df %>% group_by(product_type, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+df_bar5 <- df %>% group_by(have_children, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+df_bar6 <- df %>% group_by(region, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+df_bar7 <- df %>% group_by(family_status, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+df_bar8 <- df %>% group_by(phone_operator, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+df_bar9 <- df %>% group_by(prev_client, bad_client) %>% summarise(count=n()) %>% mutate(freq=count/sum(count))
+
+
+#put them in a list
+list_bar <- list(df_bar1, df_bar2, df_bar3, df_bar4, df_bar5, df_bar6, df_bar7, df_bar8, df_bar9)
+
+
+#loop to create plots
+for (i in 1:9) {
+  df_bar <- as.data.frame(list_bar[[i]])
+  x_val <- df_bar[,4]
+  y_val <- df_bar[,1]
+  y_lab <- names(df_bar[1])
+  group_val <- df_bar[,2]
+  
+  p <- ggplot(df_bar, aes(x=!!x_val, y=!!y_val, color=!!group_val, fill=!!group_val)) +
+    geom_bar(stat="identity", position="stack", alpha=0.5, width=0.75) +
+    labs(x="Frequency", y=y_lab, color="bad_client", fill="bad_client") +
+    scale_color_manual(values=c("#00BFC4", "#F8766D")) +
+    scale_fill_manual(values=c("#00BFC4", "#F8766D")) +
+    theme_bw()
+  
+  assign(paste0("bar", i), p)
+}
+rm(df_bar, x_val, y_val, y_lab, group_val, p, i)
 
 ```
 
 
+```{r, EDACat1, echo=FALSE}
+
+(bar1 | bar2 | bar3) / (bar4 | bar5) + plot_layout(guides="collect") +
+  plot_annotation(title="Categorical features, broken down by the outcome")
+
+```
+
+
+```{r, EDACat2, echo=FALSE}
+
+(bar6 | bar7) / (bar8 | bar9) + plot_layout(guides="collect") +
+  plot_annotation(title="Categorical features, broken down by the outcome")
+
+```
 
 
 ## Feature engineering
