@@ -370,6 +370,7 @@ space_glmnet <- ps(
 
 
 #create autotuner object
+set.seed(1922)
 autotune_glmnet = AutoTuner$new(
   learner=learner_glmnet,
   resampling=resample_cv,
@@ -418,6 +419,7 @@ space_svm = ps(
 
 
 #create autotuner object
+set.seed(1922)
 autotune_svm = AutoTuner$new(
   learner=learner_svm,
   resampling=resample_cv,
@@ -542,6 +544,7 @@ learner_baseline <- as_learner(graph_preproc %>>%
 
   
 #create benchmark grid
+set.seed(1923)
 benchmark_test = benchmark_grid(tasks=task_credit,
                                    learn=list(learner_baseline, learner_bayes, 
                                               learner_glmnet,
@@ -572,7 +575,7 @@ df_metrics[,2:6] <- round(df_metrics[,2:6], 4)
 
 
 #gt table
-tb_perf <- gt(data=df_metrics, rowname_col = 1) %>% 
+gt(data=df_metrics, rowname_col = 1) %>% 
   tab_header(title="Performance metrics of loan client classifiers",
              subtitle="Averages of 5-folds crossvalidation. Threshold probability=0.5") %>% 
   opt_table_font(font=list(google_font("Calibri"), default_fonts())) %>% 
@@ -594,9 +597,6 @@ tb_perf <- gt(data=df_metrics, rowname_col = 1) %>%
         domain=c(0,max(df_metrics[,7]))
         ))
 
-
-#call table
-as_raw_html(tb_perf)
 
 ```
 
