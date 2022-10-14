@@ -19,23 +19,27 @@ options(scipen=999)
 
 ## Introduction
 
+A common challenge in machine learning problems is classification with class imbalanced data. Class imbalance is when the target variable we want to classify has a very imbalanced class distribution, with the minority class(es) making up a small fraction of all observations. A typical example is detecting loan defaulters or credit card fraudsters, as these will naturally make up a small minority of all customers. With a class imbalanced problem, it is key to assess the performance of ML models with the correct metrics. Basic metrics such as accuracy can be very misleading. 
+\
+\
+In this analysis, we will use a [dataset](https://www.kaggle.com/datasets/podsyp/is-this-a-good-customer) of client loan requests, and try to classify the clients / loans into "bad" or "good" binary classes, based on features like income, education and loan category. We will try several of the most established classification algorithms, evaluate them with several performance metrics, and use class weighting to try and improve performance.
+
 ## Data preparation
 
 ```{r Packages}
 
 library(tidyverse) #data handling & ggplot2
 library(GGally) #exploratory analysis
-library(DataExplorer) #exploratory analysis
 library(patchwork) #combining ggplot2 objects
 library(gt) #data tables
-#library(ggedit) #editing ggplot2 objects
-library(mlr3verse) #loads various mlr3 machine learning packages
+#library(ggedit) #editing ggplot2 objects (load later as it conflicts with GGally)
+library(mlr3verse) #mlr3 machine learning packages
 library(mlr3hyperband) #hyperband tuning algorithm with mlr3
 library(xgboost) #regularized gradient boosting
 
 ```
 
-
+Let's load our original dataset, and examine the columns.
 ```{r LoadData}
 
 #load and summarize original data
@@ -43,8 +47,12 @@ df <- read.csv("./OriginalData/clients.csv", header=TRUE)
 summary(data.frame(unclass(df), stringsAsFactors = TRUE))
 
 ```
+Our target column is bad_client_target, a binary categorical variable. 0 stands for "good" and 1 for "bad" client. A better way to think about it is "good loan request" and "bad loan request", as some of the features are specific to the loan request.
 
+  - Our categorical features are month (of the loan request), sex, education level, product type (loan category), whether the client has children, region, family status, the client's phone operator and whether the client is a previous client.
+  - Our numeric features are requested credit amount (in total), credit terms (apparently in months), age and income (presumably yearly). 
 
+First, we will rename some of the column names, and recode some of the categorical features' levels, for ease of coding and plotting.
 ```{r RenameColumns}
 
 #rename columns
@@ -54,7 +62,7 @@ names(df)[14] <- "bad_client"
 
 ```
 
-
+The product type column has high cardinality, with numerous levels, some of them very infrequent with less than 10 observations. Estimates for very infrequent categorical levels may be biased due to lack of observations. We will recode the infrequent categories into more general ones, as sensibly as we can. The education column also has one infrequent level, "PhD degree" which we'll also recode into "Higher" education.
 ```{r RecodeEducation}
 
 #recode levels of education column
@@ -70,7 +78,7 @@ df$education <- recode(df$education, "Higher education"="Higher",
 
 ```{r RecodeProductType}
 
-#recode levels of product_type column, combining unfrequent levels together
+#recode levels of product_type column, combining infrequent levels together
 #new levels: Beauty, Vehicles, Necessities
 df$product_type <- recode(df$product_type, 
                           "Cosmetics and beauty services" = "Beauty",
@@ -106,6 +114,7 @@ rm(prod_types, prod_types_rare, lookup_hardware, lookup_recreational)
 ```
 
 
+We'll convert our categorical features into factors, to be used in plotting, and later to be encoded in preprocessing. Our only ordinal feature is education, and we'll order its levels according to the levels of education.
 ```{r FactorConversions}
 
 #factor convert categorical columns
@@ -136,6 +145,7 @@ df$education <- factor(df$education, levels=c("SecondarySpec", "Secondary",
 ```
 
 
+Let's see how the data looks with these changes.
 ```{r SummaryDataPrep}
 
 summary(df)
@@ -145,8 +155,11 @@ summary(df)
 
 ## Exploratory analysis
 
+We'll perform exploratory analysis on the original features before we engineer new features.
+
 ### Numeric features
 
+Let's start with our numeric features, plotting their distributions, correlations with one another, and their relationships with the outcome.
 ```{r EDANumerics, echo=FALSE}
 
 ggpairs(df,
@@ -159,7 +172,14 @@ ggpairs(df,
   theme_bw()
 
 ```
+\
+From the histograms and density plots, we see our numeric features are not normally distributed, but very right-tailed.
 
+  - There is no strong correlation between the numeric features. However, it's notable that the correlation of income with credit_term and age are higher for "bad" clients, though still low overall.
+  - Looking at the boxplots and density plots, we see our numeric features except credit_term are likely not good predictors of the outcome.
+    - It seems bad loan clients are generally more likely to request longer credit terms.
+    - Bad loan clients tend to be a little younger.
+    - The absolute highest credit amounts seem to be awarded to good clients, and the highest incomes belong to good clients, but overall there is little difference between good and bad clients in terms of credit amount and income.
 
 ### Categorical features
 
@@ -202,7 +222,7 @@ rm(df_bar, x_val, y_val, y_lab, group_val, p, i)
 
 ```
 
-
+We'll evaluate the relationships of our categorical features by making mosaic plots, with each level of the categorical feature colored by the outcome. Each bar represents the proportion of good and bad clients in that level of the categorical feature.
 ```{r, EDACat1, echo=FALSE}
 
 (bar1 | bar2 | bar3) / (bar4 | bar5) + plot_layout(guides="collect") +
@@ -210,6 +230,15 @@ rm(df_bar, x_val, y_val, y_lab, group_val, p, i)
 
 ```
 
+\
+Overall, our first five categorical features seem to be relevant predictors, though to different degrees.
+
+  - Product type / loan category seems to be a significant predictor, as the proportion of bad clients change considerably depending on its levels.
+    - Clients that request loans for cell phone purchases are almost 25% bad clients, while the proportion is close to zero for some other categories. 
+    - Another particularly suspect category is Beauty, which consists of loans for cosmetics, beauty services and jewelry.
+  - There seems to be some seasonality, as bad clients make very few loan requests in July, and considerably more in December, likely for holiday shopping.
+  - Bad clients are more likely to have secondary level education, and considerably less likely to have higher education.
+  - Female clients, or clients without children, are a bit more likely to make bad loan requests. The effect of not having children may actually be caused by age, as clients without children are likely to be younger.
 
 ```{r, EDACat2, echo=FALSE}
 
@@ -217,13 +246,23 @@ rm(df_bar, x_val, y_val, y_lab, group_val, p, i)
   plot_annotation(title="Categorical features, broken down by the outcome")
 
 ```
+\
+Previous clients seem to be more likely to make bad loan requests.
 
+  - The meaning of the family status level "Another" is unclear, even though it makes up the majority of the observations. Still, "Another" and "Unmarried" clients are less likely to make bad requests, while married clients are more likely.
+  - Clients from region 2 are more likely to make bad loan requests, and those from region 1 are the least likely.
+  - Clients who use phone operators 0 and 1 are more likely to make bad requests, and users of operator 2 are least likely.
 
 ## Feature engineering
 
+The performance of machine learning algorithms greatly depend on the quality and predictiveness of the features. If the features are not predictive, using more sophisticated models and fine-tuning hyperparameters likely won't bring much improvement.
+\
+\
+Until now, it looks like the features in our dataset are not particularly predictive of our target variable. Some of our categorical features seem to be decently predictive of bad loan clients, while the numerics tend to show weak relationships, if any. Let's see if we can extract better features from our data.
+
 ### Creating new features
 
-
+We have the total amounts, and number of payment installments requested for the loans. We can calculate the amounts to be paid in one installment as a possibly significant feature. We can also compute the ratio of the loan amount to the client's income, and the ratio of one payment to the client's income, as possible indicators of their solvency. 
 ```{r FeatEng}
 
 #payment: amount to be paid in 1 payment period
@@ -236,10 +275,16 @@ df <- df %>% mutate(ratio_amount = round(credit_amount / income, 2), .after=cred
 df <- df %>% mutate(ratio_payment = round(payment / income, 2), .after=payment)
 
 ```
+Different machine learning algorithms may benefit differently from feature engineering. 
 
+  - For example, a linear model can't evaluate relationships such as ratios or interactions unless we specifically give them as inputs, so it is more likely to benefit from the features we added. 
+  - On the other hand, tree-based models split the data consecutively with different combinations of features, so they are able to discover relationships between features, though they may still benefit from having them as direct inputs.
+  
+We will add more interaction terms in the preprocessing steps.
 
 ### Evaluating new features
 
+All of our engineered features are numerics, so let's evaluate them the same way.
 ```{r FeatEngEval, echo=FALSE}
 
 ggpairs(df,
@@ -251,12 +296,22 @@ ggpairs(df,
   theme_bw()
 
 ```
+\
+Our new features are even more right-tailed compared to the original numeric features. We'd do well to normalize them in preprocessing, especially for the sake of our Naive Bayes classifier.
 
+  - The new features do not seem particularly predictive of bad loan clients either.
+    - The highest values for one loan installment, ratio of one installment to income, and ratio of total loan amount to income all belong exclusively to good loan clients. These are likely wealthy clients with considerable non-income assets, who are able to take on the biggest loans with collateral. However, this doesn't directly help us identify bad loan clients.  
+  - The ratio of the total loan amount to income, and the ratio of one payment to income are highly correlated, which is expected.
+    - Some of the classifiers we'll use are more susceptible to multicollinearity, while others can tackle it better with regularization. 
+    - We'll keep the ratio features as they are, as they seem somewhat predictive. We could apply principal components analysis to break them up into uncorrelated PCs, but these are not guaranteed to be predictive like the original features.
 
 ## Modeling
 
+We'll use the [mlr3 packages](https://mlr3.mlr-org.com/) to apply preprocessing steps, classification models, resampling methods and performance benchmarking. The use of pipelines will ensure preprocessing steps are correctly applied while keeping the implementation and code much more cleaner than a manual implementation.
+
 ### Preprocessing
 
+We have many categorical features, and we need to convert them into numerics for many ML algorithms. First, we can apply ordinal encoding to the education feature manually quite easily. We don't need to do this separately for training and testing data, as we'd just get the same results. 
 ```{r OrdinalEncode}
 
 #function to perform ordinal encoding on a column
@@ -268,8 +323,24 @@ encode_ordinal <- function(x, order = unique(x)) {
 df$education <- encode_ordinal(df$education, order=levels(df$education))
 
 ```
+Ordinal encoding is not suitable for the rest of our categorical features, which are nominal with no order between their levels.
+\
+\
+The rest of our preprocessing will be carried out with pipe operators combined in a pipeline, or a graph as it is called in mlr3. The preprocessing steps, in order are:
 
+  - Normalization of the numeric features, with a Yeo-Johnson transformation. This is a different formulation of the better known Box-Cox transformation that also handles negative values.
+  - Target encoding of nominal categoricals, specifically with the weight of evidence method.
+    - Target encoding methods use information from the target variable to encode levels of the categorical features.
+    - Weight of evidence target encoding uses the log-likelihoods of the target variable levels, given the levels of the categorical feature, to replace the categorical values with numeric values. It is commonly used in credit risk scoring.
+  - Centering and scaling of numeric features.
+  - Adding interaction terms to the model matrix.
+   - Interaction terms are best calculated from centered & scaled numeric features, but shouldn't be centered & scaled again afterwards.
+  - Adding minority class weights to classifiers that accept this parameter. 
+    - Class weights determine which observations in the dataset get a bigger weight in the classifier's scoring function. Errors for observations with higher class weight are penalized more heavily. 
+    - The default is a weight of 1 for each observation. We can assign a larger class weight to the minority class observations, bad clients, so the model is more sensitive to mistakes for the minority class.
+    - A typical value for the minority class weight is calculated as (N. majority class obs. / N. minority class obs.).
 
+We'll combine these preprocessing steps into a "graph", a pipeline that will apply these steps in order every time we train a model. This will ensure they are applied in the correct order. Also, the calculations for some of these steps, especially target encoding, should only be derived from the training data, to avoid leakage from the testing data into model training. This is ensured by the pipeline approach.
 ```{r PipelinePreproc}
 
 #create preprocessing pipeline
@@ -304,7 +375,20 @@ graph_preproc <- pipe_yeo %>>% encode_woe %>>% pipe_center_scale %>>%
   pipe_interact %>>% pipe_weights
 
 ```
+Before moving on, let's discuss the interaction terms we added to our model matrix:
 
+  - Total credit amount X product type. This is likely an important interaction, as certain loan categories such as vehicles naturally warrant higher amounts, while large requests for some other categories may be an indicator of a bad request.
+  - Age X having children, and Age X family status. It's likely the effects of being married and having children are dependent on age, as younger couples and parents may be less resilient financially.
+  - Age X income. It's possible the effect of age is in turn really caused by income, as younger people generally, but not always, tend to have lower income.
+  
+Let's create the remaining mlr3 objects we need to perform our tuning and benchmarking:
+
+  - A classification task, with our dataset, specify the target column, and the positive class.
+  - A resampling object for 5-folds crossvalidation. 
+    - Our preprocessing pipeline will ensure the preprocessing steps are reapplied to every training set during resampling, avoiding leakage from the testing data.
+  - Numerous performance metrics to tune and benchmark our models. We'll discuss them in detail in the tuning and benchmarking sections. 
+    - The Cohen's Kappa metric is not normally available in mlr3measures, but it's straightforward to [add custom measures](https://mlr3book.mlr-org.com/extending.html). I [added](https://github.com/AhmetZamanis/LoanRequestClassification/blob/main/mlr3CustomMeasures.R) Kappa and several other classification metrics, which are calculated by calling the package [yardstick](https://yardstick.tidymodels.org/).
+  - Tuners with numerous hyperparameter tuning algorithms, and terminators to determine how many evaluations will be made. We'll discuss them more in the hyperparameter tuning section.
 
 ```{r mlr3Objects}
 
