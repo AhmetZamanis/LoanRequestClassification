@@ -23,9 +23,9 @@ Ahmet Zamanis
     -   <a href="#approach-to-hyperparameter-tuning"
         id="toc-approach-to-hyperparameter-tuning">Approach to hyperparameter
         tuning</a>
-    -   <a href="#classifiers-and-best-tunes-found"
-        id="toc-classifiers-and-best-tunes-found">Classifiers and best tunes
-        found</a>
+    -   <a href="#classifiers-with-the-best-tunes-found"
+        id="toc-classifiers-with-the-best-tunes-found">Classifiers, with the
+        best tunes found</a>
     -   <a href="#benchmarking" id="toc-benchmarking">Benchmarking</a>
 -   <a href="#conclusions" id="toc-conclusions">Conclusions</a>
 
@@ -228,6 +228,7 @@ df <- df %>% mutate(ratio_payment = round(payment / income, 2), .after=payment)
 ### Preprocessing
 
 ``` r
+#function to perform ordinal encoding on a column
 encode_ordinal <- function(x, order = unique(x)) {
   x <- as.numeric(factor(x, levels = order, exclude = NULL)) - 1
   x
@@ -239,32 +240,32 @@ df$education <- encode_ordinal(df$education, order=levels(df$education))
 ``` r
 #create preprocessing pipeline
 
-#yeo-johnson transformation for numeric features
+#yeo-johnson transformation
 pipe_yeo <- po("yeojohnson", standardize=FALSE)
 
 
-#weight of evidence encoding for nominal features
+#weight of evidence encoding
 encode_woe <- po("encodeimpact")
 
 
-#centering and scaling for numeric features
+#centering and scaling
 pipe_center_scale <- po("scale")
 
 
-#add interaction terms with model matrix
+#adding interaction terms with model matrix
 pipe_interact <- po("modelmatrix", formula = ~ . + credit_amount:product_type.No +
                       credit_amount:product_type.Yes +
                       age:income + age:family_status.No + age:family_status.Yes +
                       age:have_children.No + age:have_children.Yes)
 
 
-#add minority class weights
+#adding minority class weights
 pipe_weights <- po("classweights")
 pipe_weights$param_set$values$minor_weight <- summary(df$bad_client)[1] /
   summary(df$bad_client)[2]
 
 
-#create combined preprocessing pipeline (Graph in mlr3)
+#create combined preprocessing pipeline (called Graph in mlr3)
 graph_preproc <- pipe_yeo %>>% encode_woe %>>% pipe_center_scale %>>%
   pipe_interact %>>% pipe_weights
 ```
@@ -290,7 +291,7 @@ measures_list <- c(measure_rec, measure_prauc, measure_brier, measure_kappa,
                    measure_acc, measure_time)
 
 
-#logloss, just as a tuning metric
+#create logloss measure, just as a tuning metric
 measure_log <- msr("classif.logloss")
 
 
@@ -339,7 +340,7 @@ autotune_glmnet = AutoTuner$new(
 )
 
 
-#train autotuner object
+#train autotuner object on the classification task
 set.seed(1922)
 with_progress(autotune_glmnet$train(task_credit))
 
@@ -349,7 +350,7 @@ archive_glmnet <- as.data.table(autotune_glmnet$archive)
 #best tune: alpha 0.1231044 lambda 0.04147188 logloss 0.5871771
 
 
-#set graph learner parameters to best tuning results
+#set graph learner parameters to best tune from autotuner
 learner_glmnet$param_set$values <- autotune_glmnet$learner$param_set$values
 ```
 
@@ -384,7 +385,7 @@ autotune_svm = AutoTuner$new(
 )
 ```
 
-### Classifiers and best tunes found
+### Classifiers, with the best tunes found
 
 #### Naive Bayes
 
@@ -464,7 +465,7 @@ learner_xgb <- as_learner(graph_preproc %>>% po("learner",
 ### Benchmarking
 
 ``` r
-#create baseline learner that predicts the class probabilities as the class frequencies
+#create baseline learner
 learner_baseline <- as_learner(graph_preproc %>>% 
                                  po("learner", 
                                     learner=lrn("classif.featureless",
@@ -484,520 +485,79 @@ benchmark_test = benchmark_grid(tasks=task_credit,
 #perform benchmarking
 set.seed(1923)
 benchmarkres = benchmark(benchmark_test, store_models=TRUE)
-```
 
-    ## INFO  [15:22:20.340] [mlr3] Running benchmark with 30 resampling iterations
-    ## INFO  [15:22:20.410] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.featureless' on task 'df' (iter 1/5)
-    ## INFO  [15:22:21.115] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.featureless' on task 'df' (iter 2/5)
-    ## INFO  [15:22:21.743] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.featureless' on task 'df' (iter 3/5)
-    ## INFO  [15:22:22.369] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.featureless' on task 'df' (iter 4/5)
-    ## INFO  [15:22:23.001] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.featureless' on task 'df' (iter 5/5)
-    ## INFO  [15:22:23.622] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.naive_bayes' on task 'df' (iter 1/5)
-    ## INFO  [15:22:24.476] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.naive_bayes' on task 'df' (iter 2/5)
-    ## INFO  [15:22:25.523] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.naive_bayes' on task 'df' (iter 3/5)
-    ## INFO  [15:22:26.307] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.naive_bayes' on task 'df' (iter 4/5)
-    ## INFO  [15:22:27.104] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.naive_bayes' on task 'df' (iter 5/5)
-    ## INFO  [15:22:27.891] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.glmnet' on task 'df' (iter 1/5)
-    ## INFO  [15:22:28.626] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.glmnet' on task 'df' (iter 2/5)
-    ## INFO  [15:22:29.284] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.glmnet' on task 'df' (iter 3/5)
-    ## INFO  [15:22:29.951] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.glmnet' on task 'df' (iter 4/5)
-    ## INFO  [15:22:30.627] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.glmnet' on task 'df' (iter 5/5)
-    ## INFO  [15:22:31.290] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.kknn' on task 'df' (iter 1/5)
-    ## INFO  [15:22:33.002] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.kknn' on task 'df' (iter 2/5)
-    ## INFO  [15:22:34.724] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.kknn' on task 'df' (iter 3/5)
-    ## INFO  [15:22:36.441] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.kknn' on task 'df' (iter 4/5)
-    ## INFO  [15:22:38.154] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.kknn' on task 'df' (iter 5/5)
-    ## INFO  [15:22:39.885] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.svm' on task 'df' (iter 1/5)
-    ## INFO  [15:22:41.626] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.svm' on task 'df' (iter 2/5)
-    ## INFO  [15:22:43.395] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.svm' on task 'df' (iter 3/5)
-    ## INFO  [15:22:45.302] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.svm' on task 'df' (iter 4/5)
-    ## INFO  [15:22:47.289] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.svm' on task 'df' (iter 5/5)
-    ## INFO  [15:22:49.220] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.xgboost' on task 'df' (iter 1/5)
-    ## INFO  [15:22:50.018] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.xgboost' on task 'df' (iter 2/5)
-    ## INFO  [15:22:50.850] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.xgboost' on task 'df' (iter 3/5)
-    ## INFO  [15:22:51.677] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.xgboost' on task 'df' (iter 4/5)
-    ## INFO  [15:22:52.483] [mlr3] Applying learner 'yeojohnson.encodeimpact.scale.modelmatrix.classweights.classif.xgboost' on task 'df' (iter 5/5)
-    ## INFO  [15:22:53.283] [mlr3] Finished benchmark
 
-``` r
 #save average benchmarking results
 benchmarkres_table <- benchmarkres$aggregate(measures_list)
 ```
 
-<div id="avxemykypa" style="overflow-x:auto;overflow-y:auto;width:auto;height:auto;">
-<style>@import url("https://fonts.googleapis.com/css2?family=Calibri:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap");
-html {
-  font-family: Calibri, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif;
-}
-
-#avxemykypa .gt_table {
-  display: table;
-  border-collapse: collapse;
-  margin-left: auto;
-  margin-right: auto;
-  color: #333333;
-  font-size: 16px;
-  font-weight: normal;
-  font-style: normal;
-  background-color: #FFFFFF;
-  width: auto;
-  border-top-style: solid;
-  border-top-width: 2px;
-  border-top-color: #A8A8A8;
-  border-right-style: none;
-  border-right-width: 2px;
-  border-right-color: #D3D3D3;
-  border-bottom-style: solid;
-  border-bottom-width: 2px;
-  border-bottom-color: #A8A8A8;
-  border-left-style: none;
-  border-left-width: 2px;
-  border-left-color: #D3D3D3;
-}
-
-#avxemykypa .gt_heading {
-  background-color: #FFFFFF;
-  text-align: center;
-  border-bottom-color: #FFFFFF;
-  border-left-style: none;
-  border-left-width: 1px;
-  border-left-color: #D3D3D3;
-  border-right-style: none;
-  border-right-width: 1px;
-  border-right-color: #D3D3D3;
-}
-
-#avxemykypa .gt_title {
-  color: #333333;
-  font-size: 125%;
-  font-weight: initial;
-  padding-top: 4px;
-  padding-bottom: 4px;
-  padding-left: 5px;
-  padding-right: 5px;
-  border-bottom-color: #FFFFFF;
-  border-bottom-width: 0;
-}
-
-#avxemykypa .gt_subtitle {
-  color: #333333;
-  font-size: 85%;
-  font-weight: initial;
-  padding-top: 0;
-  padding-bottom: 6px;
-  padding-left: 5px;
-  padding-right: 5px;
-  border-top-color: #FFFFFF;
-  border-top-width: 0;
-}
-
-#avxemykypa .gt_bottom_border {
-  border-bottom-style: solid;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-}
-
-#avxemykypa .gt_col_headings {
-  border-top-style: solid;
-  border-top-width: 2px;
-  border-top-color: #D3D3D3;
-  border-bottom-style: solid;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-  border-left-style: none;
-  border-left-width: 1px;
-  border-left-color: #D3D3D3;
-  border-right-style: none;
-  border-right-width: 1px;
-  border-right-color: #D3D3D3;
-}
-
-#avxemykypa .gt_col_heading {
-  color: #333333;
-  background-color: #FFFFFF;
-  font-size: 100%;
-  font-weight: normal;
-  text-transform: inherit;
-  border-left-style: none;
-  border-left-width: 1px;
-  border-left-color: #D3D3D3;
-  border-right-style: none;
-  border-right-width: 1px;
-  border-right-color: #D3D3D3;
-  vertical-align: bottom;
-  padding-top: 5px;
-  padding-bottom: 6px;
-  padding-left: 5px;
-  padding-right: 5px;
-  overflow-x: hidden;
-}
-
-#avxemykypa .gt_column_spanner_outer {
-  color: #333333;
-  background-color: #FFFFFF;
-  font-size: 100%;
-  font-weight: normal;
-  text-transform: inherit;
-  padding-top: 0;
-  padding-bottom: 0;
-  padding-left: 4px;
-  padding-right: 4px;
-}
-
-#avxemykypa .gt_column_spanner_outer:first-child {
-  padding-left: 0;
-}
-
-#avxemykypa .gt_column_spanner_outer:last-child {
-  padding-right: 0;
-}
-
-#avxemykypa .gt_column_spanner {
-  border-bottom-style: solid;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-  vertical-align: bottom;
-  padding-top: 5px;
-  padding-bottom: 5px;
-  overflow-x: hidden;
-  display: inline-block;
-  width: 100%;
-}
-
-#avxemykypa .gt_group_heading {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  padding-left: 5px;
-  padding-right: 5px;
-  color: #333333;
-  background-color: #FFFFFF;
-  font-size: 100%;
-  font-weight: initial;
-  text-transform: inherit;
-  border-top-style: solid;
-  border-top-width: 2px;
-  border-top-color: #D3D3D3;
-  border-bottom-style: solid;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-  border-left-style: none;
-  border-left-width: 1px;
-  border-left-color: #D3D3D3;
-  border-right-style: none;
-  border-right-width: 1px;
-  border-right-color: #D3D3D3;
-  vertical-align: middle;
-}
-
-#avxemykypa .gt_empty_group_heading {
-  padding: 0.5px;
-  color: #333333;
-  background-color: #FFFFFF;
-  font-size: 100%;
-  font-weight: initial;
-  border-top-style: solid;
-  border-top-width: 2px;
-  border-top-color: #D3D3D3;
-  border-bottom-style: solid;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-  vertical-align: middle;
-}
-
-#avxemykypa .gt_from_md > :first-child {
-  margin-top: 0;
-}
-
-#avxemykypa .gt_from_md > :last-child {
-  margin-bottom: 0;
-}
-
-#avxemykypa .gt_row {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  padding-left: 5px;
-  padding-right: 5px;
-  margin: 10px;
-  border-top-style: solid;
-  border-top-width: 1px;
-  border-top-color: #D3D3D3;
-  border-left-style: none;
-  border-left-width: 1px;
-  border-left-color: #D3D3D3;
-  border-right-style: none;
-  border-right-width: 1px;
-  border-right-color: #D3D3D3;
-  vertical-align: middle;
-  overflow-x: hidden;
-}
-
-#avxemykypa .gt_stub {
-  color: #333333;
-  background-color: #FFFFFF;
-  font-size: 100%;
-  font-weight: initial;
-  text-transform: inherit;
-  border-right-style: solid;
-  border-right-width: 2px;
-  border-right-color: #D3D3D3;
-  padding-left: 5px;
-  padding-right: 5px;
-}
-
-#avxemykypa .gt_stub_row_group {
-  color: #333333;
-  background-color: #FFFFFF;
-  font-size: 100%;
-  font-weight: initial;
-  text-transform: inherit;
-  border-right-style: solid;
-  border-right-width: 2px;
-  border-right-color: #D3D3D3;
-  padding-left: 5px;
-  padding-right: 5px;
-  vertical-align: top;
-}
-
-#avxemykypa .gt_row_group_first td {
-  border-top-width: 2px;
-}
-
-#avxemykypa .gt_summary_row {
-  color: #333333;
-  background-color: #FFFFFF;
-  text-transform: inherit;
-  padding-top: 8px;
-  padding-bottom: 8px;
-  padding-left: 5px;
-  padding-right: 5px;
-}
-
-#avxemykypa .gt_first_summary_row {
-  border-top-style: solid;
-  border-top-color: #D3D3D3;
-}
-
-#avxemykypa .gt_first_summary_row.thick {
-  border-top-width: 2px;
-}
-
-#avxemykypa .gt_last_summary_row {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  padding-left: 5px;
-  padding-right: 5px;
-  border-bottom-style: solid;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-}
-
-#avxemykypa .gt_grand_summary_row {
-  color: #333333;
-  background-color: #FFFFFF;
-  text-transform: inherit;
-  padding-top: 8px;
-  padding-bottom: 8px;
-  padding-left: 5px;
-  padding-right: 5px;
-}
-
-#avxemykypa .gt_first_grand_summary_row {
-  padding-top: 8px;
-  padding-bottom: 8px;
-  padding-left: 5px;
-  padding-right: 5px;
-  border-top-style: double;
-  border-top-width: 6px;
-  border-top-color: #D3D3D3;
-}
-
-#avxemykypa .gt_striped {
-  background-color: rgba(128, 128, 128, 0.05);
-}
-
-#avxemykypa .gt_table_body {
-  border-top-style: solid;
-  border-top-width: 2px;
-  border-top-color: #D3D3D3;
-  border-bottom-style: solid;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-}
-
-#avxemykypa .gt_footnotes {
-  color: #333333;
-  background-color: #FFFFFF;
-  border-bottom-style: none;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-  border-left-style: none;
-  border-left-width: 2px;
-  border-left-color: #D3D3D3;
-  border-right-style: none;
-  border-right-width: 2px;
-  border-right-color: #D3D3D3;
-}
-
-#avxemykypa .gt_footnote {
-  margin: 0px;
-  font-size: 90%;
-  padding-left: 4px;
-  padding-right: 4px;
-  padding-left: 5px;
-  padding-right: 5px;
-}
-
-#avxemykypa .gt_sourcenotes {
-  color: #333333;
-  background-color: #FFFFFF;
-  border-bottom-style: none;
-  border-bottom-width: 2px;
-  border-bottom-color: #D3D3D3;
-  border-left-style: none;
-  border-left-width: 2px;
-  border-left-color: #D3D3D3;
-  border-right-style: none;
-  border-right-width: 2px;
-  border-right-color: #D3D3D3;
-}
-
-#avxemykypa .gt_sourcenote {
-  font-size: 90%;
-  padding-top: 4px;
-  padding-bottom: 4px;
-  padding-left: 5px;
-  padding-right: 5px;
-}
-
-#avxemykypa .gt_left {
-  text-align: left;
-}
-
-#avxemykypa .gt_center {
-  text-align: center;
-}
-
-#avxemykypa .gt_right {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-#avxemykypa .gt_font_normal {
-  font-weight: normal;
-}
-
-#avxemykypa .gt_font_bold {
-  font-weight: bold;
-}
-
-#avxemykypa .gt_font_italic {
-  font-style: italic;
-}
-
-#avxemykypa .gt_super {
-  font-size: 65%;
-}
-
-#avxemykypa .gt_footnote_marks {
-  font-style: italic;
-  font-weight: normal;
-  font-size: 75%;
-  vertical-align: 0.4em;
-}
-
-#avxemykypa .gt_asterisk {
-  font-size: 100%;
-  vertical-align: 0;
-}
-
-#avxemykypa .gt_indent_1 {
-  text-indent: 5px;
-}
-
-#avxemykypa .gt_indent_2 {
-  text-indent: 10px;
-}
-
-#avxemykypa .gt_indent_3 {
-  text-indent: 15px;
-}
-
-#avxemykypa .gt_indent_4 {
-  text-indent: 20px;
-}
-
-#avxemykypa .gt_indent_5 {
-  text-indent: 25px;
-}
-</style>
-<table class="gt_table">
-  <thead class="gt_header">
+<table style="font-family: Calibri, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', 'Fira Sans', 'Droid Sans', Arial, sans-serif; display: table; border-collapse: collapse; margin-left: auto; margin-right: auto; color: #333333; font-size: 16px; font-weight: normal; font-style: normal; background-color: #FFFFFF; width: auto; border-top-style: solid; border-top-width: 2px; border-top-color: #A8A8A8; border-right-style: none; border-right-width: 2px; border-right-color: #D3D3D3; border-bottom-style: solid; border-bottom-width: 2px; border-bottom-color: #A8A8A8; border-left-style: none; border-left-width: 2px; border-left-color: #D3D3D3;">
+  <thead style="">
     <tr>
-      <td colspan="7" class="gt_heading gt_title gt_font_normal" style>Performance metrics of loan client classifiers</td>
+      <td colspan="7" style="background-color: #FFFFFF; text-align: center; border-bottom-color: #FFFFFF; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; color: #333333; font-size: 125%; font-weight: initial; padding-top: 4px; padding-bottom: 4px; padding-left: 5px; padding-right: 5px; border-bottom-width: 0; font-weight: normal;" style>Performance metrics of loan client classifiers</td>
     </tr>
     <tr>
-      <td colspan="7" class="gt_heading gt_subtitle gt_font_normal gt_bottom_border" style>Averages of 5-folds crossvalidation. Threshold probability=0.5</td>
+      <td colspan="7" style="background-color: #FFFFFF; text-align: center; border-bottom-color: #FFFFFF; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; color: #333333; font-size: 85%; font-weight: initial; padding-top: 0; padding-bottom: 6px; padding-left: 5px; padding-right: 5px; border-top-color: #FFFFFF; border-top-width: 0; border-bottom-style: solid; border-bottom-width: 2px; border-bottom-color: #D3D3D3; font-weight: normal;" style>Averages of 5-folds crossvalidation. Threshold probability=0.5</td>
     </tr>
   </thead>
-  <thead class="gt_col_headings">
+  <thead style="border-top-style: solid; border-top-width: 2px; border-top-color: #D3D3D3; border-bottom-style: solid; border-bottom-width: 2px; border-bottom-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3;">
     <tr>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Classifier</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Recall</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">PRAUC</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Brier score</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Cohen's kappa</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Accuracy</th>
-      <th class="gt_col_heading gt_columns_bottom_border gt_center" rowspan="1" colspan="1" style="border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Time</th>
+      <th style="color: #333333; background-color: #FFFFFF; font-size: 100%; font-weight: normal; text-transform: inherit; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: bottom; padding-top: 5px; padding-bottom: 6px; padding-left: 5px; padding-right: 5px; overflow-x: hidden; text-align: center; border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Classifier</th>
+      <th style="color: #333333; background-color: #FFFFFF; font-size: 100%; font-weight: normal; text-transform: inherit; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: bottom; padding-top: 5px; padding-bottom: 6px; padding-left: 5px; padding-right: 5px; overflow-x: hidden; text-align: center; border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Recall</th>
+      <th style="color: #333333; background-color: #FFFFFF; font-size: 100%; font-weight: normal; text-transform: inherit; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: bottom; padding-top: 5px; padding-bottom: 6px; padding-left: 5px; padding-right: 5px; overflow-x: hidden; text-align: center; border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">PRAUC</th>
+      <th style="color: #333333; background-color: #FFFFFF; font-size: 100%; font-weight: normal; text-transform: inherit; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: bottom; padding-top: 5px; padding-bottom: 6px; padding-left: 5px; padding-right: 5px; overflow-x: hidden; text-align: center; border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Brier score</th>
+      <th style="color: #333333; background-color: #FFFFFF; font-size: 100%; font-weight: normal; text-transform: inherit; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: bottom; padding-top: 5px; padding-bottom: 6px; padding-left: 5px; padding-right: 5px; overflow-x: hidden; text-align: center; border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Cohen's kappa</th>
+      <th style="color: #333333; background-color: #FFFFFF; font-size: 100%; font-weight: normal; text-transform: inherit; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: bottom; padding-top: 5px; padding-bottom: 6px; padding-left: 5px; padding-right: 5px; overflow-x: hidden; text-align: center; border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Accuracy</th>
+      <th style="color: #333333; background-color: #FFFFFF; font-size: 100%; font-weight: normal; text-transform: inherit; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: bottom; padding-top: 5px; padding-bottom: 6px; padding-left: 5px; padding-right: 5px; overflow-x: hidden; text-align: center; border-bottom-width: 3px; border-bottom-style: solid; border-bottom-color: #000000; font-weight: bold;" scope="col">Time</th>
     </tr>
   </thead>
-  <tbody class="gt_table_body">
-    <tr><td class="gt_row gt_center">Baseline</td>
-<td class="gt_row gt_center" style="background-color: #FF0500; color: #FFFFFF;">0.0000</td>
-<td class="gt_row gt_center" style="background-color: #F55000; color: #FFFFFF;">0.1137</td>
-<td class="gt_row gt_center" style="background-color: #49F700; color: #000000;">0.1009</td>
-<td class="gt_row gt_center" style="background-color: #FF0500; color: #FFFFFF;">0.0000</td>
-<td class="gt_row gt_center" style="background-color: #6BED00; color: #000000;">0.8863</td>
-<td class="gt_row gt_center" style="background-color: #ABC800; color: #000000;">0.618</td></tr>
-    <tr><td class="gt_row gt_center">NaiveBayes</td>
-<td class="gt_row gt_center" style="background-color: #CFA300; color: #000000;">0.4544</td>
-<td class="gt_row gt_center" style="background-color: #EB7100; color: #000000;">0.2257</td>
-<td class="gt_row gt_center" style="background-color: #66EF00; color: #000000;">0.2038</td>
-<td class="gt_row gt_center" style="background-color: #F16000; color: #000000;">0.1635</td>
-<td class="gt_row gt_center" style="background-color: #9BD500; color: #000000;">0.7382</td>
-<td class="gt_row gt_center" style="background-color: #BFB600; color: #000000;">0.816</td></tr>
-    <tr><td class="gt_row gt_center">glmnet</td>
-<td class="gt_row gt_center" style="background-color: #B1C400; color: #000000;">0.6361</td>
-<td class="gt_row gt_center" style="background-color: #E97500; color: #000000;">0.2425</td>
-<td class="gt_row gt_center" style="background-color: #65EF00; color: #000000;">0.2007</td>
-<td class="gt_row gt_center" style="background-color: #F06300; color: #000000;">0.1735</td>
-<td class="gt_row gt_center" style="background-color: #A7CC00; color: #000000;">0.6860</td>
-<td class="gt_row gt_center" style="background-color: #AEC600; color: #000000;">0.646</td></tr>
-    <tr><td class="gt_row gt_center">kNN</td>
-<td class="gt_row gt_center" style="background-color: #FF0500; color: #FFFFFF;">0.0000</td>
-<td class="gt_row gt_center" style="background-color: #EA7300; color: #000000;">0.2327</td>
-<td class="gt_row gt_center" style="background-color: #47F800; color: #000000;">0.0951</td>
-<td class="gt_row gt_center" style="background-color: #FF0500; color: #FFFFFF;">0.0000</td>
-<td class="gt_row gt_center" style="background-color: #6BED00; color: #000000;">0.8863</td>
-<td class="gt_row gt_center" style="background-color: #F84200; color: #FFFFFF;">1.696</td></tr>
-    <tr><td class="gt_row gt_center">SVM</td>
-<td class="gt_row gt_center" style="background-color: #FF0500; color: #FFFFFF;">0.0000</td>
-<td class="gt_row gt_center" style="background-color: #E97400; color: #000000;">0.2399</td>
-<td class="gt_row gt_center" style="background-color: #47F800; color: #000000;">0.0953</td>
-<td class="gt_row gt_center" style="background-color: #FF0500; color: #FFFFFF;">0.0000</td>
-<td class="gt_row gt_center" style="background-color: #6BED00; color: #000000;">0.8863</td>
-<td class="gt_row gt_center" style="background-color: #FF0000; color: #FFFFFF;">1.846</td></tr>
-    <tr><td class="gt_row gt_center">XGBoost</td>
-<td class="gt_row gt_center" style="background-color: #BFB600; color: #000000;">0.5569</td>
-<td class="gt_row gt_center" style="background-color: #E77900; color: #000000;">0.2580</td>
-<td class="gt_row gt_center" style="background-color: #5EF100; color: #000000;">0.1713</td>
-<td class="gt_row gt_center" style="background-color: #ED6900; color: #000000;">0.1976</td>
-<td class="gt_row gt_center" style="background-color: #9AD500; color: #000000;">0.7388</td>
-<td class="gt_row gt_center" style="background-color: #BCB900; color: #000000;">0.784</td></tr>
+  <tbody style="border-top-style: solid; border-top-width: 2px; border-top-color: #D3D3D3; border-bottom-style: solid; border-bottom-width: 2px; border-bottom-color: #D3D3D3;">
+    <tr><td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center;">Baseline</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #FF0500; color: #FFFFFF;">0.0000</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #F55000; color: #FFFFFF;">0.1138</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #49F700; color: #000000;">0.1010</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #FF0500; color: #FFFFFF;">0.0000</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #6BED00; color: #000000;">0.8862</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #B2C300; color: #000000;">0.642</td></tr>
+    <tr><td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center;">NaiveBayes</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #CBA800; color: #000000;">0.4820</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #EA7300; color: #000000;">0.2351</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #63F000; color: #000000;">0.1910</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #F06300; color: #000000;">0.1753</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #98D600; color: #000000;">0.7475</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #CAA900; color: #000000;">0.886</td></tr>
+    <tr><td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center;">glmnet</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #AFC600; color: #000000;">0.6484</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #E97400; color: #000000;">0.2393</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #66EF00; color: #000000;">0.2023</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #F06300; color: #000000;">0.1755</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #A8CB00; color: #000000;">0.6814</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #B3C100; color: #000000;">0.654</td></tr>
+    <tr><td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center;">kNN</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #FF0500; color: #FFFFFF;">0.0000</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #EB7100; color: #000000;">0.2256</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #47F700; color: #000000;">0.0958</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #FF0500; color: #FFFFFF;">0.0000</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #6BED00; color: #000000;">0.8862</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #FE1A00; color: #FFFFFF;">1.714</td></tr>
+    <tr><td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center;">SVM</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #FF0500; color: #FFFFFF;">0.0000</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #EC6E00; color: #000000;">0.2144</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #48F700; color: #000000;">0.0975</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #FF0300; color: #FFFFFF;">-0.0011</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #6CED00; color: #000000;">0.8856</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #FF0000; color: #FFFFFF;">1.742</td></tr>
+    <tr><td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center;">XGBoost</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #C9AB00; color: #000000;">0.4985</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #E87600; color: #000000;">0.2460</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #5FF100; color: #000000;">0.1745</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #F15F00; color: #FFFFFF;">0.1597</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #9DD300; color: #000000;">0.7278</td>
+<td style="padding-top: 8px; padding-bottom: 8px; padding-left: 5px; padding-right: 5px; margin: 10px; border-top-style: solid; border-top-width: 1px; border-top-color: #D3D3D3; border-left-style: none; border-left-width: 1px; border-left-color: #D3D3D3; border-right-style: none; border-right-width: 1px; border-right-color: #D3D3D3; vertical-align: middle; overflow-x: hidden; text-align: center; background-color: #BEB700; color: #000000;">0.760</td></tr>
   </tbody>
   
   
 </table>
-</div>
 
 ![](Report_files/figure-gfm/PRCCurves-1.png)<!-- -->
 

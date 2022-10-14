@@ -596,7 +596,7 @@ tb_perf <- gt(data=df_metrics, rowname_col = 1) %>%
 
 
 #call table
-tb_perf
+as_raw_html(tb_perf)
 
 ```
 
