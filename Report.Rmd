@@ -574,8 +574,8 @@ df_metrics[1:6, 1] <- c("Baseline", "NaiveBayes", "glmnet", "kNN", "SVM", "XGBoo
 df_metrics[,2:6] <- round(df_metrics[,2:6], 4)
 
 
-#gt table
-gt(data=df_metrics, rowname_col = 1) %>% 
+#gt table, save as png
+perf_tb <- gt(data=df_metrics, rowname_col = 1) %>% 
   tab_header(title="Performance metrics of loan client classifiers",
              subtitle="Averages of 5-folds crossvalidation. Threshold probability=0.5") %>% 
   opt_table_font(font=list(google_font("Calibri"), default_fonts())) %>% 
@@ -596,7 +596,11 @@ gt(data=df_metrics, rowname_col = 1) %>%
         palette=c("green", "red"),
         domain=c(0,max(df_metrics[,7]))
         ))
+  
+gtsave(data=perf_tb, filename="./Report_files/figure-gfm/MetricTable.png")
 
+#load saved png
+knitr::include_graphics("./Report_files/figure-gfm/MetricTable.png")
 
 ```
 
