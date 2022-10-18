@@ -365,9 +365,9 @@ feature engineering.
     benefit from having them as direct inputs.
 
 Features such as age, income and family status are likely to interact:
-The effect of one such feature on the outcome may change depending on
-the other feature. We will add some interaction terms in the
-preprocessing steps.
+The effect of one feature on the outcome may change depending on the
+other feature. We will add some interaction terms in the preprocessing
+steps.
 
 ### Evaluating new features
 
@@ -401,8 +401,9 @@ the sake of our Naive Bayes classifier.
 -   Notably, the correlation of one payment with the ratio features is
     considerably higher for bad clients, while the correlation of the
     ratio features are considerably lower for bad clients.
--   Looking at the scatterplots between the features, these differences
-    are likely caused by the outliers in the “good” clients category.
+    -   Looking at the scatterplots between the features, these
+        differences are likely caused by the outliers in the “good”
+        clients category.
 
 ## Modeling
 
@@ -451,8 +452,9 @@ preprocessing steps, in order are:
         It is commonly used in credit risk scoring.
 -   Centering and scaling of numeric features.
 -   Adding interaction terms to the model matrix.
--   Interaction terms are best calculated from centered & scaled numeric
-    features, but shouldn’t be centered & scaled again afterwards.
+    -   Interaction terms are best calculated from centered & scaled
+        numeric features, but shouldn’t be centered & scaled again
+        afterwards.
 -   Adding minority class weights, for classifiers that accept this
     parameter.
     -   Class weights determine which observations in the dataset get a
@@ -602,24 +604,25 @@ for tuning a single learner, the regularized logistic regression model
     glmnet model, we need to tune the parameters alpha and lambda, as a
     floating point number between 0 and 1. We’ll discuss the intuition
     behind the parameters later.
--   The parameters of the preprocessing steps are stored together with
-    the parameters of the learner, so we need to write the learner
-    prefix before the hyperparameters.
+    -   The parameters of the preprocessing steps are stored together
+        with the parameters of the learner, so we need to write the
+        learner prefix before the hyperparameters.
 -   We create an Autotuner: The autotuner takes the graph learner to be
     tuned, the resampling method and performance measure to be used, the
     tuning search space, tuning algorithm and the terminator object.
--   The resampling is carried out when the autotuner is created, so we
-    need to set seed before creating an autotuner if we want to use the
-    same crossvalidation folds.
+    -   The resampling is carried out when the autotuner is created, so
+        we need to set seed before creating an autotuner if we want to
+        use the same crossvalidation folds.
 -   We’ll mainly use log loss as our scoring method for tuning, as it is
     the default for many models, and is affected by class weights.
     -   The only exception will be the kNN algorithm, as it doesn’t take
-        class weights, and log loss may be biased because of the class
-        imbalance. Instead, we’ll use the PRAUC metric, which we’ll
-        discuss later.
+        class weights, and log loss may not be appropriate for our
+        objective without taking the class imbalance into account.
+        Instead, we’ll use the PRAUC metric, which we’ll discuss later.
 -   In this instance, we use the simulated annealing tuning algorithm,
     which will run with 100 evaluations. One evaluation is one
-    resampling (in this case, 5-folds) of one parameter configuration.
+    resampling (in this case, 5-folds crossvalidation) of one parameter
+    configuration.
 -   We train the autotuner on the classification task. This will carry
     out the hyperparameter tuning, save the archive of the tuning
     results, and apply the best found tune to the graph learner within
@@ -682,8 +685,8 @@ this analysis, mostly two of them were used:
         values, but quickly locks in to a narrower range likely to hold
         a good tune, if not the best. This is more effective than random
         search, without being too expensive computationally. The name
-        and algorithm of the annealing method mimics the cooling process
-        of metals.
+        and the working principle of the annealing algorithm mimics the
+        cooling process of metals.
 -   Hyperband, which is used in the example below. Hyperband was used
     when there was more than one parameter to tune simultaneously, and
     at least one of them were integers.
@@ -709,8 +712,8 @@ this analysis, mostly two of them were used:
             of values, and we can focus on narrower ranges as necessary
             afterwards.
         -   The search space for gamma is set to integers from -8 to 2,
-            transformed as 2^K, so we try values from roughly 0.004 to
-            4, though most values tried are smaller than 1, which is a
+            then transformed as 2^K, so we try values from roughly 0.004
+            to 4, while most values tried are smaller than 1, which is a
             more likely range for the gamma parameter.
 
 ``` r
@@ -777,15 +780,16 @@ can calculate some of our performance metrics.
         document or not.
     -   Multinomial NB assumes all features are drawn from a Multinomial
         distribution, which are best used when features represent counts
-        or count rate. This variation is often used for text
+        or count rates. This variation is often used for text
         classification, as features can be word counts in a document.
 -   We will use the standard Gaussian NB. Our numeric features were far
     from normally distributed, though we will apply a normalizing
     transformation, and NB can perform decently even when the
-    assumptions are violated.
+    assumptions are violated to a degree.
 -   NB especially becomes useful for large datasets with many features,
     as more dimensions generally mean more separation, and the
-    violations of the assumptions become less impactful.
+    violations of the assumptions for a single feature becomes
+    relatively less impactful.
 -   NB generally performs better with categorical features, and it may
     perform better if we don’t encode the categorical features into
     numeric, though we’ll apply the same feature set to all models to
@@ -818,24 +822,25 @@ multicollinearity between the features.
     function, without shrinking any coefficient to zero.
 -   Elastic net regularization can be considered as a combination of L1
     and L2 in different ratios.
--   Besides regularization, we need to consider the regular assumptions
-    of logistic regression:
+-   Besides regularization, we need to consider the usual assumptions of
+    logistic regression:
     -   A binary outcome,
     -   A linear relationship between the features and the predicted log
         odds,
+    -   Lack of multicollinearity between the features,
     -   No influential observations or outliers with extreme values.
 -   We know there are some likely outliers for our numeric features, and
     it’s likely the relationships between the features and the outcome
     are not fully linear either. These may impact the performance of the
     glmnet model.
--   Multicollinearity was not a large issue to begin with, and will be
-    addressed by regularization.
+-   Multicollinearity was not a large issue to begin with in our feature
+    set, and will be further addressed by regularization.
 
-glmnet has two hyperparameters to tune:
+glmnet has two regularization hyperparameters to tune:
 
--   Alpha controls the type of regularization to apply. 0 is ridge
-    regularization, 1 is lasso regularization, and anything in between
-    is a combination, i.e elastic net regularization.
+-   Alpha controls the type of regularization to apply. 0 is L2 ridge
+    regularization, 1 is L1 lasso regularization, and anything in
+    between is a combination, i.e elastic net regularization.
     -   Our best tune has an alpha of roughly 0.12, so we have mostly
         ridge regularization with little chance of eliminating features
         completely from the model.
@@ -866,7 +871,8 @@ in its subset of neighbors.
     expensive with high dimensions.
 -   No parametric assumptions are made, but for useful predictions, the
     K “neighbors” closest in terms of distance must be likely to have
-    the same class.
+    the same class. In other words, our features must sufficiently
+    separate the observations with different outcome classes.
 -   Multicollinearity is also likely to impact the model, by
     inflating/deflating the distances of observations.
 -   All features need to be numeric to calculate distances.
@@ -881,7 +887,7 @@ in its subset of neighbors.
     weights, as explained above), as there is no loss function to
     penalize. kNN can be sensitive to class imbalances.
 
-In our case, the best tune found for the number of K neighbors 129,
+In our case, the best tune found for the number of K neighbors is 129,
 which is rather large compared to the size of the dataset. This is
 likely because the features, and distances based on them, do not
 separate good and bad clients very well, so the closest neighbors to a
@@ -953,7 +959,7 @@ object. We have two hyperparameters to tune:
         classes enough.
     -   In our case, the best tune has a cost of 10, which may indicate
         the classifier is not able to separate the classes too well.
--   gamma is a parameter for the decision boundary smoothness,
+-   gamma is a parameter for the decision boundary smoothness/linearity,
     applicable for the non-linear kernels. It takes a default value of
     (1 / data dimension).
     -   Lower gamma will increase the reach of each observation when
@@ -1017,8 +1023,10 @@ further control the tradeoff between overfitting-underfitting.
 -   All features, as well as the outcome, need to be converted to
     numeric input for XGBoost. Class weights are applicable.
 
-The XGBoost model has many parameters, and tuning can be complex. Here,
-we’ll go over the main parameters and a typical approach to tuning them.
+The XGBoost model has [many
+parameters](https://xgboost.readthedocs.io/en/stable/parameter.html),
+and tuning can be complex. Here, we’ll go over the main parameters and a
+typical approach to tuning them.
 
 -   nrounds is the number of boosting rounds, i.e. the number of trees
     that will be trained as part of the ensemble.
@@ -1039,58 +1047,56 @@ Holding nrounds fixed, with a value set for early_stopping rounds:
 1.  Tune eta, which is the learning rate parameter. This is the
     shrinkage applied after each boosting round. eta takes a value from
     0 to 1, with a default of 0.3.
-
--   A lower value will make the model more robust, but will also require
-    more boosting rounds.
-
+    -   A lower value will make the model more robust, but will also
+        require more boosting rounds and slow down model training.
 2.  Tune the tree complexity parameters:
-
--   max_depth is the maximum number of splits allowed in each tree, the
-    default is 6. A value of 0 means unlimited splits are allowed. More
-    splits increase the risk of overfitting, but may also allow the
-    model to learn more complex relationships.
--   min_child_weight can be thought of as a threshold that needs to be
-    passed for a new split to be made. The default is 1, and larger
-    values make the model more conservative.
--   max_delta_step is a strict tree complexity parameter that is 0 by
-    default. It is suggested to try a value between 1-10 for problems
-    with heavy class imbalance.
-
+    -   max_depth is the maximum number of splits allowed in each tree,
+        the default is 6. A value of 0 means unlimited splits are
+        allowed. More splits increase the risk of overfitting, but may
+        also allow the model to learn more complex relationships.
+    -   min_child_weight can be thought of as a threshold that needs to
+        be passed for a new split to be made. The default is 1, and
+        larger values make the model more conservative.
+    -   max_delta_step is a strict tree complexity parameter that is
+        unused at 0 by default. It is suggested to try a value between
+        1-10 for problems with heavy class imbalance.
 3.  Tune the regularization parameters:
-
--   gamma is the minimum loss reduction required for a new split. It is
-    0 by default, and increasing it will increase regularization.
--   lambda is L2 ridge regularization, 1 by default, and alpha is L1
-    lasso regularization, 0 by default. If both of these parameters are
-    non-zero, we get a degree of elastic net regularization.
-
+    -   gamma is the minimum loss reduction required for a new split. It
+        is 0 by default, and increasing it will increase regularization.
+    -   lambda is L2 ridge regularization, 1 by default, and alpha is L1
+        lasso regularization, 0 by default. If both of these parameters
+        are non-zero, we get a degree of elastic net regularization.
 4.  Tune the randomization parameters:
-
--   subsample is the fraction of the observations to sample for each
-    boosting round.
--   colsample_bytree is the fraction of the features to sample for each
-    boosting round.
--   These parameters can be used to introduce some noise to the training
-    data, to try and make the model more robust. Their default values
-    are 1, meaning all observations and features are used by default.
-
-5.  Retune eta, if the values for the other parameters changed strongly
-    from their defaults.
+    -   subsample is the fraction of the observations to sample for each
+        boosting round.
+    -   colsample_bytree is the fraction of the features to sample for
+        each boosting round.
+    -   These parameters can be used to introduce some noise to the
+        training data, to try and make the model more robust. Their
+        default values are 1, meaning all observations and features are
+        used by default, without randomization/noise.
+5.  Retune eta, if the values for the other parameters changed
+    considerably from their defaults.
 6.  Finally, find the optimal number of nrounds for this given set of
     parameters.
-
--   I prefer to do this with XGBoost’s own crossvalidation function
-    xgb.cv, as it gives text output of each boosting round, with the
-    training errors and the testing errors.
--   Comparing the training and testing error, and observing their
-    progressions across training rounds can help discover overfitting or
-    underfitting issues.
--   Generally, if the training error is very close to the testing error,
-    it may indicate the model is underfit, and there may be more to
-    learn from the training data.
--   If the testing error is much higher from the training error, the
-    model may be overfit, it may have learned information that doesn’t
-    generalize.
+    -   I prefer to do this with XGBoost’s own crossvalidation function
+        xgb.cv, as it gives text output of each boosting round, with the
+        training errors and the testing errors.
+    -   Comparing the training and testing error, and observing their
+        progressions across training rounds can help discover
+        overfitting or underfitting issues.
+    -   Generally, if the training error is very close to the testing
+        error, and/or if the testing error gets stuck without
+        improvement, it may indicate the model is underfit, and there
+        may be more to learn from the training data. Reducing the
+        regularization parameters or making the model more complex may
+        improve performance.
+    -   If the testing error is much higher from the training error, and
+        the training error continues to sharply decrese while the
+        testing error doesn’t follow, the model may be overfit. It may
+        have learned information from the training data that doesn’t
+        generalize to the testing data. Reducing complexity and
+        increasing regularization may improve performance.
 
 The best tunes found in our case are available below.
 
@@ -1140,13 +1146,17 @@ benchmark their performances.
     observations. This corresponds to a probability prediction of
     roughly 0.89 and 0.11 for good and bad clients respectively.
 -   We will create a benchmark grid with our task, graph learners and
-    our resampling method. We will set seed before doing this, as
-    resampling will be performed upon creating the benchmark grid. We’ll
-    set a different seed from the tuning process, to test our tunes on a
-    different resampling iteration.
+    our resampling method.
+    -   We will set seed before doing this, as resampling will be
+        performed upon creating the benchmark grid.
+    -   We’ll set a different seed from the tuning process, to test our
+        tunes on a different resampling iteration. Ideally, we’d tune
+        the hyperparameters on a validation set, and test performance on
+        a separate testing set, but we don’t have many observations in
+        our dataset.
 -   We’ll run the benchmark, save the results, calculate the aggregated
-    values for each of our performance metrics, and retrieve this as a
-    data table.
+    values across crossvalidation rounds for each of our performance
+    metrics, and retrieve this as a data table.
 
 ``` r
 #create baseline learner
@@ -1192,12 +1202,13 @@ performance metric.
         problems such as ours. We see that the baseline model has an
         accuracy of almost 89%, which is quite high.
     -   In contrast, some of the classifiers including the advanced
-        XGBoost algorithm have considerably lower accuracy.
+        XGBoost algorithm have considerably lower accuracy. This does
+        not mean they perform worse than the baseline classifier.
     -   The classes of our outcome are heavily imbalanced, with roughly
         89% of observations being negative cases. Simply predicting all
         cases as negative is enough to get 89% accuracy, but this would
         be useless for our objective of finding bad loan clients.
-        Therefore, we need to evaluate our models with other metrics.
+        Therefore, we can’t evaluate these models with simple accuracy.
 -   Recall is the fraction of positive cases in the data that were
     correctly classified by the model as positive cases. If our priority
     is finding all bad loan requests, this is a key metric.
@@ -1205,9 +1216,10 @@ performance metric.
         no different from the baseline model. They are unable to find
         any of the bad loan requests at a threshold probability of 0.5.
         This means they predict a class probability less than 0.5 for
-        the positive class, for all observations, including the positive
-        cases.
-    -   NaiveBayes, glmnet and XGBoost are able to find more than half
+        the positive class for all observations, including the actual
+        positive cases. In other words, their performance in finding
+        positive cases is very poor.
+    -   Naive Bayes, glmnet and XGBoost are able to find more than half
         of the positive cases, which means they can be useful to a
         degree. glmnet does considerably better than the other
         classifiers, finding 66% of the positive cases at 0.5 threshold
@@ -1235,7 +1247,7 @@ performance metric.
     -   We will understand PRAUC better when we examine the
         precision-recall curves, but we see the metric is low for all
         classifiers. This indicates our models are unable to find many
-        positive cases, without flagging many false positives as well,
+        positive cases without flagging many negative cases as well,
         though they are still an improvement over the baseline model.
 -   Brier score is a measure of accuracy for the probability predictions
     themselves, unlike recall or precision which are based on the class
@@ -1268,11 +1280,11 @@ performance metric.
     accuracy, but one that takes class imbalance, and the possibility of
     random chance into account.
     -   Kappa is not very intuitive or explainable, but it can be a good
-        indicator of the classifier’s overall quality, regardless of
+        indicator of the classifier’s overall performance, regardless of
         class imbalance. It can also be used for multiclass
         classification problems without modifying the interpretation.
-    -   The Kappa coefficient generally takes a value between 0 and 1,
-        but theoretically it can be negative. It measures how well the
+    -   The Kappa coefficient often takes a value between 0 and 1, but
+        theoretically it can be as low as -1. It measures how well the
         classifier does compared to random chance predictions.
         -   Kappa of 0, or below, means the classifier is no different
             than random chance predictions, or even worse.
@@ -1283,8 +1295,8 @@ performance metric.
         -   Kappa greater than 0.6-0.7 is rare, and shows the classifier
             greatly improves over the predictions of random chance.
         -   Kappa does take class imbalance into account, but it’s
-            harder to reach a Kappa coefficient much higher than 0.6-0.7
-            with imbalanced data (see
+            harder to reach a higher Kappa coefficient with imbalanced
+            classes, compared to with balanced classes (see
             [here](https://thenewstack.io/cohens-kappa-what-it-is-when-to-use-it-and-how-to-avoid-its-pitfalls/)
             for more details on Kappa).
     -   We see the distance based classifiers have a Kappa coefficient
@@ -1310,27 +1322,36 @@ the threshold probability is lowered.
     There are even some quirks at the start, where precision steeply
     declines, only to considerably improve again for a while.
 -   In contrast, the perfect classifier is simply a straight line at
-    precision 1, while a very skilled classifier would start very close
-    to precision 1, and decline non-linearly as recall increases.
+    precision 1. A very skilled classifier would start very close to
+    precision 1, and decline non-linearly as the threshold probability
+    and recall increase, and a few negative observations begin to be
+    misclassified.
 -   Overall, this tells us the classifiers aren’t able to skillfully
     tell apart the positive cases from the negatives.
 -   Seeing improvements in precision as the threshold probability is
-    lowered is peculiar. Precision is the fraction of true positives
-    among cases classified as positive, so this suggests the cases with
-    the highest predicted probabilities of being positive, are in fact
-    mostly negatives. In other words, some of the classifiers such as
-    kNN are unable to find even the most likely cases of bad clients,
-    and confuse them with good clients.
+    lowered is peculiar.
+    -   Precision is the fraction of true positives among cases
+        classified as positive, and normally we’d expect more negative
+        cases to be misclassified as the threshold probability is
+        lowered, decreasing precision.
+    -   In our case, this suggests the cases with the highest predicted
+        probabilities of being positive, are in fact mostly negatives,
+        so precision can improve at lower threshold probabilities. In
+        other words, some of the classifiers such as kNN are unable to
+        identify even the most likely cases of bad clients, and confuse
+        them with good clients.
 
 ## Conclusions
 
 This report illustrated how to approach a classification problem with
 severe class imbalance, the importance of using the correct performance
-metrics, and evaluating their values in detail. We discussed and applied
-some of the most prominent classification algorithms, and illustrated
-how to tune their hyperparameters.  
+metrics, and evaluating the results in detail. Examining the individual
+probability predictions for the testing observations could yield even
+more insight into how the models behave with our data.  
   
-The models performed poorly overall, but this helped us better observe
+We discussed and applied some of the most prominent classification
+algorithms, and illustrated how to tune their hyperparameters. The
+models performed poorly overall, but this helped us better observe
 differences and nuances of several performance metrics. I believe the
 poor performance is mainly due to the feature set not being predictive
 enough of the outcome, as even an advanced algorithm like XGBoost
@@ -1348,10 +1369,11 @@ performance, and the models are trained and tuned with proper
 probability scoring methods (such as log loss) instead of measures
 dependent on the threshold probability. According to some, techniques
 that artificially change the dataset, such as oversampling, may do more
-harm than good, such as by changing the distributions of features. Such
-methods seem unintuitive for me as well, which is why they weren’t
-implemented in this analysis. I find the application of class weights
-intuitive, as they don’t change the input data, but simply instruct the
-model to be more sensitive to errors of the minority class.  
+harm than good, for example by artificially changing the distributions
+of features. Such methods seem unintuitive to me as well, which is why
+they weren’t implemented in this analysis. I find the application of
+class weights intuitive, as they don’t change the input data, but simply
+instruct the model to be more sensitive to errors of the minority
+class.  
   
 Any feedback or suggestion is welcome.
