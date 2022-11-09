@@ -1092,7 +1092,7 @@ Holding nrounds fixed, with a value set for early_stopping rounds:
         regularization parameters or making the model more complex may
         improve performance.
     -   If the testing error is much higher from the training error, and
-        the training error continues to sharply decrese while the
+        the training error continues to sharply decrease while the
         testing error doesn’t follow, the model may be overfit. It may
         have learned information from the training data that doesn’t
         generalize to the testing data. Reducing complexity and
